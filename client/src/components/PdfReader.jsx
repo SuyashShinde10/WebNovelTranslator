@@ -1,258 +1,250 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import axios from 'axios';
-import '../App.css';
 
-// Worker Setup
+// CSS for the PDF text layer (selectable text) and annotation layer (links)
+import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
+import 'react-pdf/dist/esm/Page/TextLayer.css';
+
+// --- CRITICAL FIX: CONFIGURE PDF WORKER ---
+// This fixes the "TypeError: Cannot read properties of null" crash.
+// We use the CDN link to ensure the worker version matches exactly.
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
-import 'react-pdf/dist/Page/AnnotationLayer.css';
-import 'react-pdf/dist/Page/TextLayer.css';
-
-const PdfReader = ({ file }) => { 
+const PDFReader = ({ pdfUrl, bookId }) => {
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
-  const [pdfObject, setPdfObject] = useState(null);
+  const [inputPage, setInputPage] = useState('');
+  const [bookmarks, setBookmarks] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Storage Keys (unique per book)
+  const STORAGE_KEY_LAST_READ = `book_${bookId}_lastRead`;
+  const STORAGE_KEY_BOOKMARKS = `book_${bookId}_bookmarks`;
+
+  // --- 1. LOAD SAVED DATA (RESUME & BOOKMARKS) ---
+  useEffect(() => {
+    const savedPage = localStorage.getItem(STORAGE_KEY_LAST_READ);
+    const savedBookmarks = localStorage.getItem(STORAGE_KEY_BOOKMARKS);
+
+    if (savedPage) {
+      setPageNumber(parseInt(savedPage, 10));
+    }
+    if (savedBookmarks) {
+      setBookmarks(JSON.parse(savedBookmarks));
+    }
+  }, [bookId]);
+
+  // --- 2. AUTO-SAVE PROGRESS ---
+  useEffect(() => {
+    // Only save if we are on a valid page
+    if (pageNumber > 0) {
+      localStorage.setItem(STORAGE_KEY_LAST_READ, pageNumber);
+    }
+  }, [pageNumber, STORAGE_KEY_LAST_READ]);
+
+  // --- HANDLERS ---
   
-  // MODES: 'NORMAL' (Just PDF), 'READ' (Text), 'AUDIO' (Auto-Play)
-  const [appMode, setAppMode] = useState('NORMAL'); 
-  
-  const [translatedText, setTranslatedText] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [pdfWidth, setPdfWidth] = useState(null);
-  const [statusMsg, setStatusMsg] = useState('');
-
-  // Refs to track state inside event listeners (Crucial for Audio Loop)
-  const appModeRef = useRef('NORMAL');
-  const pageNumberRef = useRef(1);
-  const numPagesRef = useRef(null);
-
-  // Responsive Width
-  useEffect(() => {
-    function updateWidth() {
-      const width = Math.min(window.innerWidth - 40, 700);
-      setPdfWidth(width);
-    }
-    updateWidth();
-    window.addEventListener('resize', updateWidth);
-    return () => window.removeEventListener('resize', updateWidth);
-  }, []);
-
-  // Update Refs whenever state changes
-  useEffect(() => {
-    appModeRef.current = appMode;
-    pageNumberRef.current = pageNumber;
-    numPagesRef.current = numPages;
-  }, [appMode, pageNumber, numPages]);
-
-  // Stop audio when component unmounts
-  useEffect(() => {
-    return () => window.speechSynthesis.cancel();
-  }, []);
-
-  function onDocumentLoadSuccess(pdf) {
-    setNumPages(pdf.numPages);
-    setPdfObject(pdf);
+  // Called when PDF loads successfully
+  function onDocumentLoadSuccess({ numPages }) {
+    setNumPages(numPages);
+    setLoading(false);
   }
 
-  // --- 1. CORE FUNCTIONS ---
-
-  async function extractTextFromPage(pageNo) {
-    if (!pdfObject) return "";
-    const page = await pdfObject.getPage(pageNo);
-    const textContent = await page.getTextContent();
-    return textContent.items.map(item => item.str).join(' ');
-  }
-
-  async function translateCurrentPage() {
-    setLoading(true);
-    setStatusMsg(`Translating Page ${pageNumberRef.current}...`);
-    try {
-      const rawText = await extractTextFromPage(pageNumberRef.current);
-      
-      if (!rawText.trim()) {
-        setStatusMsg("Skipping empty page...");
-        // If audio mode, skip to next page automatically
-        if (appModeRef.current === 'AUDIO') handleNextPage(); 
-        setLoading(false);
-        return "";
-      }
-
-      // Translate to HINDI (Fixed Language)
-      const res = await axios.post('/api/translate', {
-        text: rawText,
-        targetLang: 'hi'
-      });
-
-      const hindiText = res.data.translatedText;
-      setTranslatedText(hindiText);
-      setLoading(false);
-      return hindiText;
-
-    } catch (err) {
-      console.error(err);
-      setStatusMsg("Error translating page.");
-      setLoading(false);
-      // If error in audio mode, stop everything so user knows
-      if (appModeRef.current === 'AUDIO') setAppMode('NORMAL');
-      return null;
-    }
-  }
-
-  // --- 2. AUDIO ENGINE (THE LOOP) ---
-
-  const speakText = (text) => {
-    if (!text) return;
-    
-    window.speechSynthesis.cancel();
-    setStatusMsg(`🔊 Reading Page ${pageNumberRef.current}...`);
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    
-    // Find Hindi Voice
-    const voices = window.speechSynthesis.getVoices();
-    const hindiVoice = voices.find(v => v.lang.includes('hi') || v.lang.includes('HI'));
-    if (hindiVoice) utterance.voice = hindiVoice;
-
-    utterance.rate = 1.0; 
-
-    // THE MAGIC: When done speaking, go to next page
-    utterance.onend = () => {
-      if (appModeRef.current === 'AUDIO') {
-        console.log("Audio finished. Moving to next page...");
-        handleNextPage();
-      }
-    };
-
-    window.speechSynthesis.speak(utterance);
+  // Navigation: Prev/Next
+  const changePage = (offset) => {
+    setPageNumber((prevPageNumber) => Math.min(Math.max(1, prevPageNumber + offset), numPages));
   };
 
-  // --- 3. STATE MACHINE (Handles Mode Changes) ---
-
-  // Triggered when Page Changes (Manual or Auto)
-  useEffect(() => {
-    if (appMode === 'NORMAL') return;
-
-    // If in READ or AUDIO mode, translate the new page immediately
-    const processPage = async () => {
-      const text = await translateCurrentPage();
-      
-      if (text && appMode === 'AUDIO') {
-        // If Audio mode, start speaking immediately after translation
-        speakText(text);
-      }
-    };
-
-    processPage();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageNumber, appMode]); // Runs on Page Change OR Mode Change
-
-
-  // --- 4. CONTROLS ---
-
-  const toggleReadMode = () => {
-    window.speechSynthesis.cancel();
-    if (appMode === 'READ') {
-      setAppMode('NORMAL');
+  // Search: Go to specific page
+  const handleGoToPage = (e) => {
+    e.preventDefault();
+    const targetPage = parseInt(inputPage, 10);
+    if (targetPage >= 1 && targetPage <= numPages) {
+      setPageNumber(targetPage);
+      setInputPage('');
     } else {
-      setAppMode('READ'); // This will trigger the useEffect above to translate
+      alert(`Please enter a valid page number between 1 and ${numPages}`);
     }
   };
 
-  const toggleAudioMode = () => {
-    window.speechSynthesis.cancel();
-    if (appMode === 'AUDIO') {
-      setAppMode('NORMAL');
-      setStatusMsg("Audiobook Stopped.");
+  // Bookmark: Toggle current page
+  const toggleBookmark = () => {
+    let newBookmarks;
+    if (bookmarks.includes(pageNumber)) {
+      newBookmarks = bookmarks.filter((b) => b !== pageNumber);
     } else {
-      setAppMode('AUDIO'); // This triggers useEffect -> Translate -> Speak -> Next Page
+      newBookmarks = [...bookmarks, pageNumber].sort((a, b) => a - b);
     }
-  };
-
-  const handleNextPage = () => {
-    if (pageNumberRef.current >= numPagesRef.current) {
-      setStatusMsg("End of Book Reached.");
-      setAppMode('NORMAL');
-      return;
-    }
-    setPageNumber(prev => prev + 1);
-  };
-
-  const handlePrevPage = () => {
-    window.speechSynthesis.cancel();
-    setPageNumber(prev => Math.max(prev - 1, 1));
+    setBookmarks(newBookmarks);
+    localStorage.setItem(STORAGE_KEY_BOOKMARKS, JSON.stringify(newBookmarks));
   };
 
   return (
-    <div className="app-container fade-in">
+    <div className="pdf-reader-container" style={{ maxWidth: '900px', margin: '20px auto', fontFamily: 'Arial, sans-serif' }}>
       
-      {/* --- STATUS BAR --- */}
-      {loading && <div style={{textAlign:'center', padding: '10px', color: '#e67e22', fontWeight:'bold'}}>{statusMsg}</div>}
-      {appMode === 'AUDIO' && !loading && <div style={{textAlign:'center', padding: '10px', color: '#27ae60', fontWeight:'bold'}}>▶ Playing Audiobook Mode...</div>}
-
-      {/* --- CONTROL TOOLBAR --- */}
-      <div className="toolbar" style={{flexWrap: 'wrap', justifyContent: 'center'}}>
+      {/* --- CONTROL BAR --- */}
+      <div style={styles.controlBar}>
         
-        {/* Navigation */}
-        <button className="btn btn-secondary" disabled={pageNumber <= 1} onClick={handlePrevPage}>← Prev</button>
-        <span className="page-info">Page {pageNumber} / {numPages || '--'}</span>
-        <button className="btn btn-secondary" disabled={pageNumber >= numPages} onClick={() => setPageNumber(p => p+1)}>Next →</button>
+        {/* Navigation Buttons */}
+        <div style={styles.navGroup}>
+          <button 
+            style={styles.button} 
+            disabled={pageNumber <= 1} 
+            onClick={() => changePage(-1)}
+          >
+            Previous
+          </button>
+          
+          <span style={styles.pageInfo}>
+            Page <strong>{pageNumber}</strong> of {numPages || '--'}
+          </span>
+          
+          <button 
+            style={styles.button} 
+            disabled={pageNumber >= numPages} 
+            onClick={() => changePage(1)}
+          >
+            Next
+          </button>
+        </div>
 
-        <div style={{width: '20px'}}></div> {/* Spacer */}
+        {/* Search Input */}
+        <form onSubmit={handleGoToPage} style={styles.searchGroup}>
+          <input 
+            type="number" 
+            placeholder="Go to..." 
+            value={inputPage}
+            onChange={(e) => setInputPage(e.target.value)}
+            style={styles.input}
+          />
+          <button type="submit" style={styles.goButton}>Go</button>
+        </form>
 
-        {/* MODE TOGGLES */}
+        {/* Bookmark Button */}
         <button 
-          onClick={toggleReadMode} 
-          className={`btn ${appMode === 'READ' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={toggleBookmark}
+          style={{ 
+            ...styles.button, 
+            backgroundColor: bookmarks.includes(pageNumber) ? '#FFD700' : '#e0e0e0',
+            color: bookmarks.includes(pageNumber) ? '#000' : '#333'
+          }}
         >
-          {appMode === 'READ' ? '📖 Exit Reading' : '📖 Read (Hindi)'}
+          {bookmarks.includes(pageNumber) ? '★ Saved' : '☆ Bookmark'}
         </button>
-
-        <button 
-          onClick={toggleAudioMode} 
-          className={`btn ${appMode === 'AUDIO' ? 'btn-primary' : 'btn-secondary'}`}
-          style={{backgroundColor: appMode === 'AUDIO' ? '#e74c3c' : ''}} // Red when active
-        >
-          {appMode === 'AUDIO' ? '⏹ Stop Audio' : '🎧 Start Audiobook'}
-        </button>
-
       </div>
 
-      <div className="document-wrapper">
+      {/* --- BOOKMARK LIST (Quick Access) --- */}
+      {bookmarks.length > 0 && (
+        <div style={styles.bookmarkList}>
+          <strong>Bookmarks: </strong>
+          {bookmarks.map((bm) => (
+            <span 
+              key={bm} 
+              onClick={() => setPageNumber(bm)} 
+              style={styles.bookmarkItem}
+            >
+              {bm}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* --- PDF DISPLAY --- */}
+      <div style={styles.documentWrapper}>
+        {loading && <p>Loading PDF...</p>}
         
-        {/* --- 1. NORMAL PDF MODE --- */}
-        {appMode === 'NORMAL' && (
-           <Document file={file} onLoadSuccess={onDocumentLoadSuccess} loading={<div>Loading novel...</div>}>
-             <Page pageNumber={pageNumber} width={pdfWidth} renderTextLayer={true} className="pdf-page-shadow" />
-           </Document>
-        )}
-
-        {/* --- 2. TRANSLATED / AUDIO VISUAL MODE --- */}
-        {(appMode === 'READ' || appMode === 'AUDIO') && (
-          <div className="text-reader fade-in">
-             <div className="text-reader-header">
-                <span>
-                   {appMode === 'AUDIO' ? '🎧 Listening to Page ' : '📖 Reading Page '} 
-                   {pageNumber} (Hindi)
-                </span>
-             </div>
-             
-             {loading ? (
-               <div style={{padding: '40px', textAlign: 'center', color: '#7f8c8d'}}>
-                 <p>Translating...</p>
-                 <div className="spinner"></div> 
-               </div>
-             ) : (
-               <div className="text-content">
-                 {translatedText.split('\n').map((para, index) => <p key={index}>{para}</p>)}
-               </div>
-             )}
-          </div>
-        )}
-
+        <Document
+          file={pdfUrl}
+          onLoadSuccess={onDocumentLoadSuccess}
+          onLoadError={(error) => console.error("Error loading PDF:", error)}
+          loading="Loading PDF..."
+        >
+          <Page 
+            pageNumber={pageNumber} 
+            renderTextLayer={true} 
+            renderAnnotationLayer={true}
+            // Dynamic width based on container, capped at 800px
+            width={Math.min(window.innerWidth * 0.9, 800)} 
+          />
+        </Document>
       </div>
     </div>
   );
 };
 
-export default PdfReader;
+// --- SIMPLE INLINE STYLES ---
+const styles = {
+  controlBar: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '10px',
+    padding: '15px',
+    backgroundColor: '#f8f9fa',
+    borderRadius: '8px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    marginBottom: '20px'
+  },
+  navGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px'
+  },
+  searchGroup: {
+    display: 'flex',
+    gap: '5px'
+  },
+  button: {
+    padding: '8px 12px',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    backgroundColor: '#007bff',
+    color: 'white',
+    fontWeight: 'bold'
+  },
+  goButton: {
+    padding: '8px 12px',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    backgroundColor: '#28a745',
+    color: 'white'
+  },
+  input: {
+    padding: '8px',
+    borderRadius: '4px',
+    border: '1px solid #ccc',
+    width: '60px'
+  },
+  pageInfo: {
+    minWidth: '100px',
+    textAlign: 'center'
+  },
+  bookmarkList: {
+    marginBottom: '15px',
+    padding: '10px',
+    backgroundColor: '#fff3cd',
+    borderRadius: '4px',
+    fontSize: '0.9rem'
+  },
+  bookmarkItem: {
+    cursor: 'pointer',
+    color: '#856404',
+    textDecoration: 'underline',
+    marginRight: '10px',
+    fontWeight: 'bold'
+  },
+  documentWrapper: {
+    display: 'flex',
+    justifyContent: 'center',
+    border: '1px solid #ddd',
+    padding: '20px',
+    backgroundColor: '#525659', // Dark gray background like Adobe Reader
+    borderRadius: '8px',
+    minHeight: '500px'
+  }
+};
+
+export default PDFReader;

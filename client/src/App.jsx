@@ -1,37 +1,19 @@
-import React, { useState } from 'react';
-import FileUpload from './components/FileUpload';
-import PdfReader from './components/PdfReader';
-import './App.css';
+import React from 'react';
+import PDFReader from './PDFReader';
+
+// Example PDF file (replace with your local file or URL)
+import myPdf from './assets/sample.pdf'; 
 
 function App() {
-  const [currentFile, setCurrentFile] = useState(null); 
-
   return (
-    <div className="app-container">
-      <header style={{ marginBottom: '30px', textAlign: 'center' }}>
-        <h1 style={{ color: '#2c3e50', margin: 0 }}>Web Novel Translator</h1>
-        <p style={{ color: '#7f8c8d', marginTop: '5px' }}>AI-Powered English to Hindi Reader</p>
-      </header>
+    <div className="App">
+      <h1>My Book Reader</h1>
       
-      {!currentFile ? (
-        // Pass the function to save the whole file object
-        <FileUpload onFileSelect={(file) => setCurrentFile(file)} />
-      ) : (
-        <div className="fade-in">
-           <div style={{ maxWidth: '800px', margin: '0 auto 10px auto' }}>
-             <button 
-               onClick={() => setCurrentFile(null)} 
-               className="btn btn-secondary"
-               style={{ padding: '5px 10px', fontSize: '0.9rem' }}
-             >
-               ← Upload New Novel
-             </button>
-           </div>
-           
-           {/* Pass the File object directly to the reader */}
-           <PdfReader file={currentFile} />
-        </div>
-      )}
+      {/* Pass a unique bookId so bookmarks are saved specifically for this file */}
+      <PDFReader 
+        pdfUrl={myPdf} 
+        bookId="lotm-vol-1" 
+      />
     </div>
   );
 }
