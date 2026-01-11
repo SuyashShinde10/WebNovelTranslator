@@ -1,220 +1,172 @@
- /* client/src/App.css */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+/* client/src/App.css */
 
+/* 1. GLOBAL RESET - Forces Dark Mode on the whole page */
 :root {
-  --primary: #6c5ce7;
-  --primary-hover: #5649c0;
-  --bg-dark: #1e1e2e;
-  --bg-panel: #262636;
+  --bg-dark: #121212;       /* Very dark grey */
+  --bg-card: #1e1e1e;       /* Card background */
+  --primary: #bb86fc;       /* Purple accent */
   --text-main: #ffffff;
-  --text-muted: #a0a0b0;
-  --accent-red: #ff7675;
-  --accent-green: #00b894;
-  --shadow-lg: 0 10px 30px rgba(0,0,0,0.3);
+  --text-muted: #b0b0b0;
 }
 
-body {
+html, body, #root {
   margin: 0;
-  font-family: 'Inter', sans-serif;
-  background-color: var(--bg-dark);
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-dark); /* CRITICAL: Sets background color */
   color: var(--text-main);
-  -webkit-font-smoothing: antialiased;
+  font-family: 'Segoe UI', sans-serif;
+  overflow-x: hidden;
 }
 
-/* --- ANIMATIONS --- */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.fade-in {
-  animation: fadeIn 0.4s ease-out forwards;
-}
-
-/* --- LAYOUT CONTAINERS --- */
+/* 2. LAYOUT CONTAINERS */
 .app-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
   min-height: 100vh;
+  width: 100%;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+/* 3. UPLOAD CARD (The Box) */
+.upload-card {
+  background-color: var(--bg-card);
+  padding: 40px;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 500px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5); /* Deep shadow */
+  border: 1px solid #333;
+}
+
+.upload-header h2 {
+  font-size: 2rem;
+  margin-bottom: 10px;
+  color: var(--primary);
+}
+
+/* 4. DRAG & DROP ZONE */
+.drop-zone {
+  margin-top: 30px;
+  border: 2px dashed #444;
+  background-color: #181818;
+  border-radius: 12px;
+  padding: 40px 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 150px;
   display: flex;
   flex-direction: column;
-  align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at top right, #2d2d44, #1e1e2e);
+  align-items: center;
 }
 
+.drop-zone:hover {
+  border-color: var(--primary);
+  background-color: #252525;
+}
+
+.drop-zone.has-file {
+  border-style: solid;
+  border-color: #00e676; /* Green when file selected */
+  background-color: #1a2f1a;
+}
+
+/* 5. BUTTONS */
+.btn-primary {
+  margin-top: 25px;
+  width: 100%;
+  padding: 15px;
+  background-color: var(--primary);
+  color: #000;
+  font-weight: bold;
+  font-size: 1.1rem;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.1);
+  transform: scale(1.02);
+}
+
+.btn-browse {
+  background: #333;
+  color: white;
+  border: 1px solid #555;
+  padding: 8px 16px;
+  border-radius: 20px;
+  margin-top: 15px;
+  cursor: pointer;
+}
+
+/* 6. READER UI (Fixes the PDF View) */
 .reader-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  width: 100%;
-  overflow: hidden;
+  width: 100vw;
+  background-color: #121212;
 }
 
-/* --- UPLOAD CARD UI --- */
-.upload-card {
-  background: var(--bg-panel);
-  border: 1px solid rgba(255,255,255,0.05);
-  padding: 3rem;
-  border-radius: 24px;
-  width: 100%;
-  max-width: 480px;
-  text-align: center;
-  box-shadow: var(--shadow-lg);
-}
-
-.upload-header h2 {
-  margin: 0 0 10px;
-  font-size: 1.8rem;
-  background: linear-gradient(90deg, #fff, #a0a0b0);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.upload-header p {
-  color: var(--text-muted);
-  font-size: 0.95rem;
-  margin-bottom: 2rem;
-}
-
-.drop-zone {
-  border: 2px dashed #444;
-  border-radius: 16px;
-  padding: 40px 20px;
-  background: rgba(0,0,0,0.2);
-  transition: all 0.2s;
-  cursor: pointer;
-}
-
-.drop-zone:hover, .drop-zone.active {
-  border-color: var(--primary);
-  background: rgba(108, 92, 231, 0.1);
-}
-
-/* --- READER TOOLBAR --- */
 .toolbar {
-  height: 64px;
-  background: rgba(30, 30, 46, 0.95);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  height: 70px;
+  background-color: #1f1f1f;
+  border-bottom: 1px solid #333;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
   position: sticky;
   top: 0;
-  z-index: 100;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  z-index: 50;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
 }
 
-.toolbar-group {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-/* --- BUTTONS & INPUTS --- */
-.btn {
-  height: 36px;
-  padding: 0 16px;
-  border-radius: 8px;
-  border: none;
-  font-weight: 600;
-  font-size: 0.9rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transition: all 0.2s;
-  color: white;
-}
-
-.btn-icon {
-  width: 36px;
-  padding: 0;
-  justify-content: center;
-}
-
-.btn-secondary {
-  background: rgba(255,255,255,0.1);
-}
-.btn-secondary:hover:not(:disabled) {
-  background: rgba(255,255,255,0.2);
-}
-.btn-secondary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: var(--primary);
-  box-shadow: 0 4px 12px rgba(108, 92, 231, 0.4);
-}
-.btn-primary:hover {
-  background: var(--primary-hover);
-  transform: translateY(-1px);
-}
-
-.btn-danger { background: var(--accent-red); }
-.btn-danger:hover { background: #e66767; }
-
-.page-input {
-  background: rgba(0,0,0,0.3);
-  border: 1px solid rgba(255,255,255,0.1);
-  color: white;
-  padding: 0 10px;
-  height: 36px;
-  width: 60px;
-  border-radius: 8px;
-  text-align: center;
-}
-.page-input:focus {
-  outline: none;
-  border-color: var(--primary);
-}
-
-/* --- DOCUMENT AREA --- */
 .document-wrapper {
   flex: 1;
-  overflow-y: auto;
-  padding: 40px 20px;
+  overflow-y: auto; /* Allows scrolling */
   display: flex;
   justify-content: center;
-  background: #181824;
+  padding: 30px;
+  background-color: #0e0e0e; /* Dark background behind PDF */
 }
 
-.pdf-page-shadow canvas {
-  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-  border-radius: 4px;
+/* PDF Page Shadow */
+.react-pdf__Page canvas {
+  box-shadow: 0 0 20px rgba(0,0,0,0.5) !important;
+  max-width: 100%;
+  height: auto !important;
 }
 
-/* Text Reader Mode */
+/* Text Reader Area */
 .text-reader {
   max-width: 800px;
-  width: 100%;
-  background: var(--bg-panel);
+  background-color: #1e1e1e;
   padding: 40px;
-  border-radius: 12px;
+  border-radius: 8px;
   line-height: 1.8;
-  font-size: 1.1rem;
-  box-shadow: var(--shadow-lg);
+  font-size: 18px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
 }
 
-.text-reader-header {
-  border-bottom: 1px solid rgba(255,255,255,0.1);
-  padding-bottom: 15px;
-  margin-bottom: 20px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 700;
-  color: var(--primary);
-}
-
-.spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-top-color: white;
+/* Spinner */
+.spinner-small {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(0,0,0,0.3);
   border-radius: 50%;
+  border-top-color: #000;
   animation: spin 1s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.fade-in { animation: fadeIn 0.5s ease-in; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }

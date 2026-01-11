@@ -12,20 +12,18 @@ const PdfReader = ({ file }) => {
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [pdfObject, setPdfObject] = useState(null);
-  const [viewMode, setViewMode] = useState('PDF'); 
+  const [viewMode, setViewMode] = useState('PDF');
   const [translatedText, setTranslatedText] = useState('');
   const [loading, setLoading] = useState(false);
   const [pdfWidth, setPdfWidth] = useState(800);
-  const [inputPage, setInputPage] = useState('');
-  const [isAutoPlay, setIsAutoPlay] = useState(false); 
-  const isAutoPlayRef = useRef(false); 
+  const [isAutoPlay, setIsAutoPlay] = useState(false);
+  const isAutoPlayRef = useRef(false);
   const translationCache = useRef(new Map());
 
-  // Handle Resize
   useEffect(() => {
-    const updateWidth = () => setPdfWidth(Math.min(window.innerWidth - 60, 900));
-    updateWidth();
+    const updateWidth = () => setPdfWidth(Math.min(window.innerWidth - 50, 800));
     window.addEventListener('resize', updateWidth);
+    updateWidth();
     return () => window.removeEventListener('resize', updateWidth);
   }, []);
 
@@ -60,139 +58,81 @@ const PdfReader = ({ file }) => {
     } catch (err) { return "Translation failed."; }
   };
 
-  const prefetchNextPage = async (currentPage) => {
-    const nextPage = currentPage + 1;
-    if (nextPage <= numPages && !translationCache.current.has(nextPage)) {
-      await getTranslation(nextPage);
-    }
-  };
-
-  const loadPageContent = async (pageNum, mode) => {
-    if (mode === 'PDF') {
-      if (pdfObject) prefetchNextPage(pageNum);
-      return;
-    }
-    setLoading(true);
-    const text = await getTranslation(pageNum);
-    setTranslatedText(text);
-    setLoading(false);
-    if (pdfObject) prefetchNextPage(pageNum);
-  };
-
-  useEffect(() => {
-    if (pdfObject) {
-      loadPageContent(pageNumber, viewMode);
-      if (isAutoPlay) runAutoSequence();
-    }
-  }, [pageNumber, viewMode, pdfObject, isAutoPlay]);
-
   const runAutoSequence = async () => {
-    let hindiText = translationCache.current.get(pageNumber);
-    if (!hindiText) {
-      hindiText = await getTranslation(pageNumber);
-      setTranslatedText(hindiText);
+    let text = translationCache.current.get(pageNumber);
+    if (!text) {
+      text = await getTranslation(pageNumber);
+      setTranslatedText(text);
     }
-    if (viewMode !== 'TEXT') setViewMode('TEXT');
-    speakText(hindiText, () => {
-      if (pageNumber < numPages) setPageNumber(prev => prev + 1);
-      else { setIsAutoPlay(false); alert("Book Completed!"); }
+    setViewMode('TEXT');
+    speakText(text, () => {
+      if (pageNumber < numPages) setPageNumber(p => p + 1);
+      else { setIsAutoPlay(false); alert("Book Finished"); }
     });
   };
 
   const speakText = (text, onComplete) => {
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
+    const u = new SpeechSynthesisUtterance(text);
     const voices = window.speechSynthesis.getVoices();
-    const hindiVoice = voices.find(v => v.lang.includes('hi')) || voices[0];
-    if (hindiVoice) utterance.voice = hindiVoice;
-    utterance.onend = () => { if (onComplete && isAutoPlayRef.current) onComplete(); };
-    window.speechSynthesis.speak(utterance);
+    const hindi = voices.find(v => v.lang.includes('hi'));
+    if (hindi) u.voice = hindi;
+    u.onend = () => { if (onComplete && isAutoPlayRef.current) onComplete(); };
+    window.speechSynthesis.speak(u);
   };
 
-  const changePage = (offset) => {
-    setIsAutoPlay(false);
-    const newPage = pageNumber + offset;
-    if (newPage >= 1 && newPage <= numPages) setPageNumber(newPage);
-  };
-
-  const handleJumpToPage = (e) => {
-    e.preventDefault();
-    const target = parseInt(inputPage);
-    if (target >= 1 && target <= numPages) {
-      setIsAutoPlay(false);
-      setPageNumber(target);
-      setInputPage('');
+  const loadContent = async () => {
+    if (viewMode === 'TEXT') {
+      setLoading(true);
+      const t = await getTranslation(pageNumber);
+      setTranslatedText(t);
+      setLoading(false);
     }
+    if (isAutoPlay) runAutoSequence();
+    // Prefetch next
+    if (pageNumber < numPages) getTranslation(pageNumber + 1); 
   };
+
+  useEffect(() => {
+    if (pdfObject) loadContent();
+  }, [pageNumber, viewMode, pdfObject, isAutoPlay]);
 
   return (
-    <div className="reader-container fade-in">
-      {/* TOOLBAR */}
+    <div className="reader-container">
+      {/* 1. DARK TOOLBAR */}
       <div className="toolbar">
-        {/* Left: Close */}
-        <div className="toolbar-group">
-          <button className="btn btn-secondary btn-icon" onClick={() => window.location.reload()} title="Close Book">
-             ✕
-          </button>
-          <h4 style={{margin:0, fontWeight:600, color:'#fff', display:'none', sm:{display:'block'}}}>Reader</h4>
+        <div style={{display:'flex', gap:'10px'}}>
+           <button className="btn-browse" onClick={() => window.location.reload()}>Back</button>
+           <button className="btn-browse" disabled={pageNumber<=1} onClick={() => { setIsAutoPlay(false); setPageNumber(p=>p-1)}}>Prev</button>
+           <span style={{color:'white', alignSelf:'center', margin:'0 10px'}}>Pg {pageNumber}</span>
+           <button className="btn-browse" disabled={pageNumber>=numPages} onClick={() => { setIsAutoPlay(false); setPageNumber(p=>p+1)}}>Next</button>
         </div>
-
-        {/* Center: Navigation */}
-        <div className="toolbar-group">
-          <button className="btn btn-secondary btn-icon" disabled={pageNumber <= 1} onClick={() => changePage(-1)}>←</button>
-          <span style={{color:'#fff', fontWeight:600, minWidth:'80px', textAlign:'center', fontSize:'0.9rem'}}>
-             {pageNumber} / {numPages || '--'}
-          </span>
-          <button className="btn btn-secondary btn-icon" disabled={pageNumber >= numPages} onClick={() => changePage(1)}>→</button>
-        </div>
-
-        {/* Right: Actions */}
-        <div className="toolbar-group">
-           <form onSubmit={handleJumpToPage} style={{display:'flex'}}>
-             <input className="page-input" type="number" placeholder="Pg#" value={inputPage} onChange={(e) => setInputPage(e.target.value)} />
-           </form>
-
-           <button 
-             onClick={() => setViewMode(viewMode === 'PDF' ? 'TEXT' : 'PDF')} 
-             className={`btn ${viewMode === 'TEXT' ? 'btn-primary' : 'btn-secondary'}`}
-             title="Toggle Text/PDF Mode"
-           >
-             {viewMode === 'TEXT' ? 'View PDF' : 'Translate'}
+        
+        <div style={{display:'flex', gap:'10px'}}>
+           <button onClick={() => setViewMode(viewMode==='PDF'?'TEXT':'PDF')} className="btn-browse" style={{background: viewMode==='TEXT' ? '#bb86fc' : '#333'}}>
+             {viewMode==='PDF' ? 'Translate' : 'View PDF'}
            </button>
-
-           <button 
-             onClick={() => setIsAutoPlay(!isAutoPlay)} 
-             className={`btn ${isAutoPlay ? 'btn-danger' : 'btn-primary'}`}
-             title="Auto Play Audio"
-           >
-             {isAutoPlay ? 'Stop' : '▶ Play'}
+           <button onClick={() => setIsAutoPlay(!isAutoPlay)} className="btn-browse" style={{background: isAutoPlay ? '#cf6679' : '#03dac6', color: 'black', fontWeight:'bold'}}>
+             {isAutoPlay ? 'Stop Audio' : 'Auto Play'}
            </button>
         </div>
       </div>
 
-      {/* CONTENT AREA */}
+      {/* 2. CENTERED CONTENT */}
       <div className="document-wrapper">
         {viewMode === 'PDF' ? (
-           <Document file={file} onLoadSuccess={onDocumentLoadSuccess} loading={<div className="spinner"></div>}>
-             <Page pageNumber={pageNumber} width={pdfWidth} renderTextLayer={false} renderAnnotationLayer={false} className="pdf-page-shadow" />
+           <Document file={file} onLoadSuccess={onDocumentLoadSuccess} loading={<div style={{color:'white'}}>Loading PDF...</div>}>
+             <Page pageNumber={pageNumber} width={pdfWidth} renderTextLayer={false} renderAnnotationLayer={false} />
            </Document>
         ) : (
            <div className="text-reader fade-in">
-              <div className="text-reader-header">
-                 <span>🇮🇳 Hindi Translation</span>
-                 {loading && <div className="spinner"></div>}
-              </div>
-              <div style={{minHeight:'400px'}}>
-                {loading ? (
-                  <div style={{textAlign:'center', marginTop:'50px', color:'#888'}}>Translating Page {pageNumber}...</div>
-                ) : (
-                  translatedText ? translatedText.split('\n').map((para, i) => <p key={i}>{para}</p>) : "No text extracted."
-                )}
-              </div>
+              <h3 style={{color: '#bb86fc', marginTop:0}}>Hindi Translation</h3>
+              {loading ? <p>Translating...</p> : translatedText.split('\n').map((p,i)=><p key={i}>{p}</p>)}
            </div>
         )}
       </div>
     </div>
   );
 };
+
 export default PdfReader;
