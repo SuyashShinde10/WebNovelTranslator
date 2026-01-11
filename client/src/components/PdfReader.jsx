@@ -9,7 +9,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/b
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-const PdfReader = ({ file }) => { // Receives 'file' object directly
+const PdfReader = ({ file }) => { 
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [pdfObject, setPdfObject] = useState(null);
@@ -17,8 +17,9 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
   const [translatedText, setTranslatedText] = useState('');
   const [loading, setLoading] = useState(false);
   const [pdfWidth, setPdfWidth] = useState(null);
+  const [isSpeaking, setIsSpeaking] = useState(false); // New State for Audio
 
-  // Responsive Width Calculation
+  // Mobile Responsive Width
   useEffect(() => {
     function updateWidth() {
       const width = Math.min(window.innerWidth - 40, 700);
@@ -27,6 +28,11 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
     updateWidth();
     window.addEventListener('resize', updateWidth);
     return () => window.removeEventListener('resize', updateWidth);
+  }, []);
+
+  // Stop audio when component unmounts
+  useEffect(() => {
+    return () => window.speechSynthesis.cancel();
   }, []);
 
   function onDocumentLoadSuccess(pdf) {
@@ -41,19 +47,61 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
     return textContent.items.map(item => item.str).join(' ');
   }
 
+  // --- AUDIO FUNCTION ---
+  const speakText = (text, langCode) => {
+    // 1. Stop any current speech
+    window.speechSynthesis.cancel();
+    setIsSpeaking(true);
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    // 2. Try to find a matching voice (e.g., Hindi voice for 'hi')
+    const voices = window.speechSynthesis.getVoices();
+    const targetVoice = voices.find(v => v.lang.startsWith(langCode));
+    if (targetVoice) utterance.voice = targetVoice;
+
+    // 3. Configure speed/pitch
+    utterance.rate = 1.0; 
+    utterance.pitch = 1.0;
+
+    // 4. Handle End of Speech
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const stopSpeaking = () => {
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+  };
+
+  // --- ACTIONS ---
+
+  const handleReadEnglish = async () => {
+    if (isSpeaking) {
+      stopSpeaking();
+      return;
+    }
+    const text = await extractTextFromPage(pageNumber);
+    if (text.trim()) {
+      speakText(text, 'en'); // Read in English
+    } else {
+      alert("No text found on this page to read.");
+    }
+  };
+
   const handleTranslate = async (langCode) => {
+    stopSpeaking(); // Stop any audio first
     setLoading(true);
     try {
       const rawText = await extractTextFromPage(pageNumber);
-      
       if (!rawText.trim()) {
         alert("This page appears to be an image. Cannot extract text!");
         setLoading(false);
         return;
       }
 
-      // THIS IS THE ONLY TIME WE TALK TO THE SERVER
-      // usage of relative path '/api/translate' makes it work on Vercel automatically
       const res = await axios.post('/api/translate', {
         text: rawText,
         targetLang: langCode
@@ -71,6 +119,7 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
   };
 
   const changePage = (offset) => {
+    stopSpeaking(); // Stop audio when turning page
     setPageNumber(prev => prev + offset);
     setViewMode('PDF'); 
     setTranslatedText('');
@@ -78,23 +127,35 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
 
   return (
     <div className="app-container fade-in">
+      
+      {/* --- TOOLBAR --- */}
       <div className="toolbar">
-        <button className="btn btn-secondary" disabled={pageNumber <= 1} onClick={() => changePage(-1)}>← Prev</button>
+        <button className="btn btn-secondary" disabled={pageNumber <= 1} onClick={() => changePage(-1)}>←</button>
         <span className="page-info">Page {pageNumber} / {numPages || '--'}</span>
-        <button className="btn btn-secondary" disabled={pageNumber >= numPages} onClick={() => changePage(1)}>Next →</button>
+        <button className="btn btn-secondary" disabled={pageNumber >= numPages} onClick={() => changePage(1)}>→</button>
 
+        {/* --- AUDIOBOOK BUTTON (ENGLISH) --- */}
         {viewMode === 'PDF' && (
-          <div className="translate-actions">
-            <button onClick={() => handleTranslate('hi')} disabled={loading} className="lang-btn">
-              {loading ? '...' : '🇮🇳 Hindi'}
-            </button>
-             <button onClick={() => handleTranslate('es')} disabled={loading} className="lang-btn">
-              🇪🇸 Spanish
-            </button>
-          </div>
+           <button 
+             onClick={handleReadEnglish} 
+             className={`btn ${isSpeaking ? 'btn-primary' : 'btn-secondary'}`}
+             style={{marginLeft: '10px'}}
+           >
+             {isSpeaking ? '⏹ Stop' : '🔊 Listen'}
+           </button>
         )}
       </div>
 
+      {/* --- TRANSLATION BUTTONS --- */}
+      {viewMode === 'PDF' && (
+        <div className="translate-actions" style={{justifyContent: 'center', marginBottom: '20px', gap: '10px', display: 'flex'}}>
+          <button onClick={() => handleTranslate('hi')} disabled={loading} className="lang-btn">🇮🇳 Hindi</button>
+          <button onClick={() => handleTranslate('es')} disabled={loading} className="lang-btn">🇪🇸 Spanish</button>
+          <button onClick={() => handleTranslate('fr')} disabled={loading} className="lang-btn">🇫🇷 French</button>
+        </div>
+      )}
+
+      {/* --- DOCUMENT AREA --- */}
       <div className="document-wrapper">
         {viewMode === 'PDF' && (
            <Document file={file} onLoadSuccess={onDocumentLoadSuccess} loading={<div>Loading novel...</div>}>
@@ -102,12 +163,24 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
            </Document>
         )}
 
+        {/* --- TRANSLATED TEXT VIEW --- */}
         {viewMode === 'TEXT' && (
           <div className="text-reader fade-in">
              <div className="text-reader-header">
                 <span>Translated Chapter</span>
-                <button onClick={() => setViewMode('PDF')} className="close-btn">× Close</button>
+                
+                {/* --- AUDIO BUTTON (TRANSLATED) --- */}
+                <button 
+                  onClick={() => isSpeaking ? stopSpeaking() : speakText(translatedText, 'hi')} // Defaulting hint to Hindi logic, but it auto-detects largely
+                  className="btn"
+                  style={{marginRight: 'auto', marginLeft: '15px', padding: '5px 10px', fontSize: '0.9rem'}}
+                >
+                   {isSpeaking ? '⏹ Stop Audio' : '🔊 Read Aloud'}
+                </button>
+
+                <button onClick={() => { stopSpeaking(); setViewMode('PDF'); }} className="close-btn">× Close</button>
              </div>
+             
              <div className="text-content">
                {translatedText.split('\n').map((para, index) => <p key={index}>{para}</p>)}
              </div>
