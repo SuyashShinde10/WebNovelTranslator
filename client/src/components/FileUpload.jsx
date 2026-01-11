@@ -1,32 +1,22 @@
 import React, { useState, useRef } from 'react';
 import axios from 'axios';
-import '../App.css'; 
+import '../App.css';
 
 const FileUpload = ({ onUploadSuccess }) => {
   const [file, setFile] = useState(null);
-  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  
-  // Ref for the hidden input
   const fileInputRef = useRef(null);
 
-  // Handle File Selection
+  // --- Handlers ---
   const handleFile = (selectedFile) => {
-    setMessage('');
     if (selectedFile && selectedFile.type === 'application/pdf') {
       setFile(selectedFile);
     } else {
-      setMessage('⚠️ Please upload a valid PDF file.');
-      setFile(null);
+      alert("⚠️ Only PDF files are supported!");
     }
   };
 
-  const onFileChange = (e) => {
-    handleFile(e.target.files[0]);
-  };
-
-  // Drag & Drop Handlers
   const onDragOver = (e) => {
     e.preventDefault();
     setIsDragging(true);
@@ -40,118 +30,120 @@ const FileUpload = ({ onUploadSuccess }) => {
   const onDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
-    const droppedFile = e.dataTransfer.files[0];
-    handleFile(droppedFile);
+    handleFile(e.dataTransfer.files[0]);
   };
 
-  // Upload Logic
-  const onUpload = async () => {
-    if (!file) {
-      setMessage('Please select a PDF file first.');
-      return;
-    }
+  const removeFile = (e) => {
+    e.stopPropagation(); // Prevent clicking the dropzone again
+    setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
-    const formData = new FormData();
-    formData.append('novelPdf', file); 
+  const onUpload = async () => {
+    if (!file) return;
 
     setLoading(true);
+    const formData = new FormData();
+    formData.append('novelPdf', file);
+
     try {
-      const res = await axios.post('/api/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      const res = await axios.post('/api/upload', formData);
       if (onUploadSuccess) onUploadSuccess(res.data.filename);
     } catch (err) {
       console.error(err);
-      setMessage('❌ Upload failed. Please check your connection.');
+      alert("Upload failed. Check server.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Trigger hidden input click
-  const handleClickZone = () => {
-    fileInputRef.current.click();
-  };
-
   return (
     <div className="app-container">
-      <div className="upload-card">
+      <div className="upload-card fade-in">
         
-        {/* Header Section */}
-        <div className="upload-icon-large">📖</div>
-        <h2 style={{margin: '0 0 10px 0', color: '#2d3436'}}>AI Novel Reader</h2>
-        <p style={{color: '#636e72', margin: '0 0 20px 0'}}>
-          Upload your PDF to start reading with <b>Audio & Translation</b>.
-        </p>
+        {/* 1. Header Text */}
+        <div className="upload-header">
+          <h2>Web Novel Reader</h2>
+          <p>AI-Powered Translation & Audio Books</p>
+        </div>
 
-        {/* Drag & Drop Zone */}
+        {/* 2. Drag & Drop Zone */}
         <div 
-          className={`drop-zone ${isDragging ? 'active' : ''}`}
+          className={`drop-zone ${isDragging ? 'active' : ''} ${file ? 'has-file' : ''}`}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
           onDrop={onDrop}
-          onClick={handleClickZone}
+          onClick={() => !file && fileInputRef.current.click()} // Only open browse if no file
         >
           <input 
             type="file" 
             accept="application/pdf" 
-            onChange={onFileChange} 
+            onChange={(e) => handleFile(e.target.files[0])} 
             ref={fileInputRef}
             style={{ display: 'none' }} 
           />
-          
-          {file ? (
-            <div className="file-info">
-              {/* PDF Icon SVG */}
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#e74c3c" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" y1="13" x2="8" y2="13"></line>
-                <line x1="16" y1="17" x2="8" y2="17"></line>
-                <polyline points="10 9 9 9 8 9"></polyline>
-              </svg>
-              <div style={{textAlign: 'left'}}>
-                <div style={{fontSize: '0.85rem', color:'#888'}}>Selected File:</div>
-                <div className="file-name-display">{file.name}</div>
-              </div>
-            </div>
-          ) : (
-            <div>
-              {/* Cloud Upload SVG */}
-              <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#23a6d5" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{marginBottom: '10px'}}>
+
+          {!file ? (
+            // --- STATE: NO FILE ---
+            <>
+              {/* Cloud Icon SVG */}
+              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#636e72" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                 <polyline points="17 8 12 3 7 8"></polyline>
                 <line x1="12" y1="3" x2="12" y2="15"></line>
               </svg>
-              <p style={{margin:0, fontWeight: 500, color: '#555'}}>
-                Drag & drop your PDF here
-              </p>
-              <p style={{margin:0, fontSize: '0.8rem', color: '#999'}}>or click to browse</p>
+              
+              <h3 style={{marginTop: '20px', color: '#2d3436', fontSize:'1.1rem'}}>Drag & Drop your Novel</h3>
+              <p style={{color: '#b2bec3', fontSize: '0.9rem', marginBottom: '15px'}}>Supports .PDF (Max 10MB)</p>
+              
+              <button className="btn-browse" onClick={(e) => {
+                e.stopPropagation();
+                fileInputRef.current.click();
+              }}>
+                Browse Files
+              </button>
+            </>
+          ) : (
+            // --- STATE: FILE SELECTED ---
+            <div className="file-preview">
+              {/* PDF Icon */}
+              <div style={{background: '#ffeaa7', padding: '10px', borderRadius: '8px'}}>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#d63031" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                  <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+              </div>
+
+              <div className="file-details">
+                <div className="file-name">{file.name}</div>
+                <div className="file-size">{(file.size / 1024 / 1024).toFixed(2)} MB</div>
+              </div>
+
+              <button className="btn-remove" onClick={removeFile} title="Remove File">
+                ✕
+              </button>
             </div>
           )}
         </div>
 
-        {/* Upload Button */}
+        {/* 3. Action Button */}
         <button 
+          className="btn-primary" 
           onClick={onUpload} 
-          disabled={loading || !file} 
-          className="btn-primary"
+          disabled={!file || loading}
         >
           {loading ? (
             <>
-              <div className="spinner-small"></div>
-              <span>Uploading...</span>
+              <div className="spinner-small"></div> Processing...
             </>
           ) : (
-            <>
-              <span>Start Reading</span>
-              <span>→</span>
-            </>
+            <>Start Reading 🚀</>
           )}
         </button>
 
-        {/* Error Message */}
-        {message && <div className="error-msg fade-in">{message}</div>}
       </div>
     </div>
   );
