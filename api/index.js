@@ -2,80 +2,91 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const multer = require('multer');
 
 const app = express();
 
-// --- 1. MEMORY STORAGE (Fixes the Vercel crash) ---
-const upload = multer({ storage: multer.memoryStorage() });
-
-app.use(cors());
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 const API_KEY = process.env.GEMINI_API_KEY;
-// Use ONLY 1.5-flash. It is the fastest and has the highest free limits.
-const MODEL_NAME = "gemini-1.5-flash"; 
+// SWITCH to 'v1' for better stability with newer models in 2026
+const BASE_URL = "https://generativelanguage.googleapis.com/v1"; 
 
-app.get('/', (req, res) => {
-  res.send(`Backend Running. Model: ${MODEL_NAME}`);
-});
+// --- UPDATED MODEL LIST (2026 Standards) ---
+const MODEL_CASCADE = [
+    'gemini-3-flash',        // 🚀 Newest/Fastest (Late 2025 release)
+    'gemini-2.5-flash',      // ✅ Stable Workhorse
+    'gemini-2.0-flash',      // 👴 Legacy fallback
+];
 
-app.post('/api/upload', upload.single('novelPdf'), (req, res) => {
-  if (req.file) {
-    console.log(`📂 File received: ${req.file.originalname}`);
-    res.json({ filename: req.file.originalname });
-  } else {
-    res.status(400).json({ error: "No file uploaded" });
-  }
-});
+async function tryTranslate(modelName, promptText) {
+    const cleanName = modelName.replace('models/', '');
+    const url = `${BASE_URL}/models/${cleanName}:generateContent?key=${API_KEY}`;
+    
+    try {
+        const response = await axios.post(url, {
+            contents: [{ parts: [{ text: promptText }] }]
+        }, { headers: { 'Content-Type': 'application/json' } });
+
+        // SAFETY CHECK: Ensure the API actually returned a candidate
+        if (!response.data.candidates || response.data.candidates.length === 0) {
+            throw new Error("Blocked by safety filters or empty response.");
+        }
+
+        return response.data.candidates[0].content.parts[0].text;
+    } catch (error) {
+        // Extract the real error message from Google's API response
+        const apiMessage = error.response?.data?.error?.message || error.message;
+        throw new Error(`[${cleanName}] Error: ${apiMessage}`);
+    }
+}
 
 app.post('/api/translate', async (req, res) => {
-  const { text } = req.body;
+    const { text, targetLang } = req.body;
+    if (!text) return res.status(400).json({ error: 'No text provided' });
 
-  if (!API_KEY) return res.status(500).json({ error: "Server missing API Key" });
-  if (!text) return res.status(400).json({ error: "No text provided" });
+    console.log(`\n--- Starting Translation to ${targetLang} ---`);
 
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
-    
-    const response = await axios.post(url, {
-      contents: [{
-        parts: [{ text: `Translate to Hindi (Casual): "${text}"` }]
-      }]
-    });
-
-    const translatedText = response.data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (translatedText) {
-      res.json({ translatedText });
+    let promptText = "";
+    if (targetLang === 'hi') {
+        promptText = `Translate this fiction text into casual, daily-spoken Hindi (Hindustani). Avoid complex Sanskrit words. Text: "${text}"`;
     } else {
-      throw new Error("Empty response from AI");
+        promptText = `Translate this text into ${targetLang}:\n\n"${text}"`;
     }
 
-  } catch (error) {
-    // --- SPECIFIC ERROR HANDLING ---
-    if (error.response) {
-      const status = error.response.status;
-      console.error(`❌ API Error ${status}:`, JSON.stringify(error.response.data));
+    // PHASE 1: Try the Cascade
+    for (const modelName of MODEL_CASCADE) {
+        try {
+            console.log(`👉 Trying model: ${modelName}...`);
+            const result = await tryTranslate(modelName, promptText);
+            console.log(`✅ Success with ${modelName}!`);
+            
+            return res.json({ 
+                original: text, 
+                translatedText: result, 
+                usedModel: modelName 
+            });
 
-      if (status === 429) {
-        // RATE LIMIT ERROR
-        return res.status(429).json({ 
-          error: "Quota Exceeded", 
-          translatedText: "⚠️ System is busy (Rate Limit). Please wait 1 minute." 
-        });
-      }
-      
-      return res.status(status).json({ error: "AI Error", details: error.response.data });
+        } catch (err) {
+            console.warn(`⚠️ ${err.message}`); 
+            // Loop continues to the next model...
+        }
     }
-    
-    console.error("Server Error:", error.message);
-    res.status(500).json({ error: "Server connection failed" });
-  }
+
+    // PHASE 2: Ultimate Failure
+    console.error("❌ All models failed.");
+    res.status(500).json({ 
+        error: 'Translation Failed', 
+        details: 'All AI models (Gemini 3, 2.5) failed. Check server logs for API Key issues.' 
+    });
 });
 
-module.exports = app;
-
-if (require.main === module) {
+// VERCEL EXPORT
+if (process.env.VERCEL) {
+    module.exports = app;
+} else {
     const PORT = 5000;
-    app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+    app.listen(PORT, () => {
+        console.log(`Server running locally on http://localhost:${PORT}`);
+    });
 }
