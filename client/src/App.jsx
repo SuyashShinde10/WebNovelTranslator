@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import SmartReader from './components/SmartReader'; // Import the new file
+import SmartReader from './components/PdfReader'; // Import the new file
 
 function App() {
   const [pdfFile, setPdfFile] = useState(null);
