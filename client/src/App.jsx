@@ -1,49 +1,51 @@
 import React, { useState } from 'react';
 import FileUpload from './components/FileUpload';
 import PdfReader from './components/PdfReader';
-import './App.css';
+import './App.css'; // Global styles
 
 function App() {
-  // State to hold the uploaded PDF file
-  const [pdfFile, setPdfFile] = useState(null);
+  const [currentFile, setCurrentFile] = useState(null);
 
   return (
     <div className="app-root">
       
-      {/* 1. If NO file is selected, show the Upload Component */}
-      {!pdfFile ? (
-        <div className="app-container">
-          <FileUpload onFileSelect={(file) => setPdfFile(file)} />
-        </div>
-      ) : (
-        
-        /* 2. If a file IS selected, show the PDF Reader */
-        <div className="reader-view">
-          
-          {/* A small button to close the book and upload a new one */}
+      {/* HEADER / NAV (Optional, adds a nice touch) */}
+      <nav style={{
+        padding: '15px 20px', 
+        background: '#1e1e1e', 
+        borderBottom: '1px solid #333', 
+        color: 'white',
+        fontWeight: 'bold',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <span>Novel Reader AI 📖</span>
+        {currentFile && (
           <button 
-            onClick={() => setPdfFile(null)}
+            onClick={() => setCurrentFile(null)}
             style={{
-              position: 'fixed',
-              top: '15px',
-              right: '20px',
-              zIndex: 1000,
-              padding: '8px 15px',
-              backgroundColor: '#d63031',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontWeight: 'bold'
+              background: '#ff7675', border: 'none', color: 'white', 
+              padding: '5px 12px', borderRadius: '4px', cursor: 'pointer'
             }}
           >
             ✕ Close Book
           </button>
+        )}
+      </nav>
 
-          {/* The Reader Component you provided */}
-          <PdfReader file={pdfFile} />
-        </div>
-      )}
+      {/* MAIN CONTENT AREA */}
+      <div className="app-content">
+        {!currentFile ? (
+          /* STATE 1: No File -> Show Upload */
+          <div className="center-screen">
+            <FileUpload onFileSelect={(file) => setCurrentFile(file)} />
+          </div>
+        ) : (
+          /* STATE 2: File Selected -> Show Reader */
+          <PdfReader file={currentFile} />
+        )}
+      </div>
 
     </div>
   );
