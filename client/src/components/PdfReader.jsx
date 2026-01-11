@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import axios from 'axios';
 import '../App.css';
@@ -13,13 +13,21 @@ const PdfReader = ({ file }) => {
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [pdfObject, setPdfObject] = useState(null);
-  const [viewMode, setViewMode] = useState('PDF'); 
+  
+  // MODES: 'NORMAL' (Just PDF), 'READ' (Text), 'AUDIO' (Auto-Play)
+  const [appMode, setAppMode] = useState('NORMAL'); 
+  
   const [translatedText, setTranslatedText] = useState('');
   const [loading, setLoading] = useState(false);
   const [pdfWidth, setPdfWidth] = useState(null);
-  const [isSpeaking, setIsSpeaking] = useState(false); // New State for Audio
+  const [statusMsg, setStatusMsg] = useState('');
 
-  // Mobile Responsive Width
+  // Refs to track state inside event listeners (Crucial for Audio Loop)
+  const appModeRef = useRef('NORMAL');
+  const pageNumberRef = useRef(1);
+  const numPagesRef = useRef(null);
+
+  // Responsive Width
   useEffect(() => {
     function updateWidth() {
       const width = Math.min(window.innerWidth - 40, 700);
@@ -29,6 +37,13 @@ const PdfReader = ({ file }) => {
     window.addEventListener('resize', updateWidth);
     return () => window.removeEventListener('resize', updateWidth);
   }, []);
+
+  // Update Refs whenever state changes
+  useEffect(() => {
+    appModeRef.current = appMode;
+    pageNumberRef.current = pageNumber;
+    numPagesRef.current = numPages;
+  }, [appMode, pageNumber, numPages]);
 
   // Stop audio when component unmounts
   useEffect(() => {
@@ -40,6 +55,8 @@ const PdfReader = ({ file }) => {
     setPdfObject(pdf);
   }
 
+  // --- 1. CORE FUNCTIONS ---
+
   async function extractTextFromPage(pageNo) {
     if (!pdfObject) return "";
     const page = await pdfObject.getPage(pageNo);
@@ -47,145 +64,192 @@ const PdfReader = ({ file }) => {
     return textContent.items.map(item => item.str).join(' ');
   }
 
-  // --- AUDIO FUNCTION ---
-  const speakText = (text, langCode) => {
-    // 1. Stop any current speech
+  async function translateCurrentPage() {
+    setLoading(true);
+    setStatusMsg(`Translating Page ${pageNumberRef.current}...`);
+    try {
+      const rawText = await extractTextFromPage(pageNumberRef.current);
+      
+      if (!rawText.trim()) {
+        setStatusMsg("Skipping empty page...");
+        // If audio mode, skip to next page automatically
+        if (appModeRef.current === 'AUDIO') handleNextPage(); 
+        setLoading(false);
+        return "";
+      }
+
+      // Translate to HINDI (Fixed Language)
+      const res = await axios.post('/api/translate', {
+        text: rawText,
+        targetLang: 'hi'
+      });
+
+      const hindiText = res.data.translatedText;
+      setTranslatedText(hindiText);
+      setLoading(false);
+      return hindiText;
+
+    } catch (err) {
+      console.error(err);
+      setStatusMsg("Error translating page.");
+      setLoading(false);
+      // If error in audio mode, stop everything so user knows
+      if (appModeRef.current === 'AUDIO') setAppMode('NORMAL');
+      return null;
+    }
+  }
+
+  // --- 2. AUDIO ENGINE (THE LOOP) ---
+
+  const speakText = (text) => {
+    if (!text) return;
+    
     window.speechSynthesis.cancel();
-    setIsSpeaking(true);
+    setStatusMsg(`🔊 Reading Page ${pageNumberRef.current}...`);
 
     const utterance = new SpeechSynthesisUtterance(text);
     
-    // 2. Try to find a matching voice (e.g., Hindi voice for 'hi')
+    // Find Hindi Voice
     const voices = window.speechSynthesis.getVoices();
-    const targetVoice = voices.find(v => v.lang.startsWith(langCode));
-    if (targetVoice) utterance.voice = targetVoice;
+    const hindiVoice = voices.find(v => v.lang.includes('hi') || v.lang.includes('HI'));
+    if (hindiVoice) utterance.voice = hindiVoice;
 
-    // 3. Configure speed/pitch
     utterance.rate = 1.0; 
-    utterance.pitch = 1.0;
 
-    // 4. Handle End of Speech
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    // THE MAGIC: When done speaking, go to next page
+    utterance.onend = () => {
+      if (appModeRef.current === 'AUDIO') {
+        console.log("Audio finished. Moving to next page...");
+        handleNextPage();
+      }
+    };
 
     window.speechSynthesis.speak(utterance);
   };
 
-  const stopSpeaking = () => {
+  // --- 3. STATE MACHINE (Handles Mode Changes) ---
+
+  // Triggered when Page Changes (Manual or Auto)
+  useEffect(() => {
+    if (appMode === 'NORMAL') return;
+
+    // If in READ or AUDIO mode, translate the new page immediately
+    const processPage = async () => {
+      const text = await translateCurrentPage();
+      
+      if (text && appMode === 'AUDIO') {
+        // If Audio mode, start speaking immediately after translation
+        speakText(text);
+      }
+    };
+
+    processPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageNumber, appMode]); // Runs on Page Change OR Mode Change
+
+
+  // --- 4. CONTROLS ---
+
+  const toggleReadMode = () => {
     window.speechSynthesis.cancel();
-    setIsSpeaking(false);
+    if (appMode === 'READ') {
+      setAppMode('NORMAL');
+    } else {
+      setAppMode('READ'); // This will trigger the useEffect above to translate
+    }
   };
 
-  // --- ACTIONS ---
+  const toggleAudioMode = () => {
+    window.speechSynthesis.cancel();
+    if (appMode === 'AUDIO') {
+      setAppMode('NORMAL');
+      setStatusMsg("Audiobook Stopped.");
+    } else {
+      setAppMode('AUDIO'); // This triggers useEffect -> Translate -> Speak -> Next Page
+    }
+  };
 
-  const handleReadEnglish = async () => {
-    if (isSpeaking) {
-      stopSpeaking();
+  const handleNextPage = () => {
+    if (pageNumberRef.current >= numPagesRef.current) {
+      setStatusMsg("End of Book Reached.");
+      setAppMode('NORMAL');
       return;
     }
-    const text = await extractTextFromPage(pageNumber);
-    if (text.trim()) {
-      speakText(text, 'en'); // Read in English
-    } else {
-      alert("No text found on this page to read.");
-    }
+    setPageNumber(prev => prev + 1);
   };
 
-  const handleTranslate = async (langCode) => {
-    stopSpeaking(); // Stop any audio first
-    setLoading(true);
-    try {
-      const rawText = await extractTextFromPage(pageNumber);
-      if (!rawText.trim()) {
-        alert("This page appears to be an image. Cannot extract text!");
-        setLoading(false);
-        return;
-      }
-
-      const res = await axios.post('/api/translate', {
-        text: rawText,
-        targetLang: langCode
-      });
-
-      setTranslatedText(res.data.translatedText);
-      setViewMode('TEXT');
-
-    } catch (err) {
-      console.error(err);
-      alert("Translation failed. Check backend console.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const changePage = (offset) => {
-    stopSpeaking(); // Stop audio when turning page
-    setPageNumber(prev => prev + offset);
-    setViewMode('PDF'); 
-    setTranslatedText('');
+  const handlePrevPage = () => {
+    window.speechSynthesis.cancel();
+    setPageNumber(prev => Math.max(prev - 1, 1));
   };
 
   return (
     <div className="app-container fade-in">
       
-      {/* --- TOOLBAR --- */}
-      <div className="toolbar">
-        <button className="btn btn-secondary" disabled={pageNumber <= 1} onClick={() => changePage(-1)}>←</button>
-        <span className="page-info">Page {pageNumber} / {numPages || '--'}</span>
-        <button className="btn btn-secondary" disabled={pageNumber >= numPages} onClick={() => changePage(1)}>→</button>
+      {/* --- STATUS BAR --- */}
+      {loading && <div style={{textAlign:'center', padding: '10px', color: '#e67e22', fontWeight:'bold'}}>{statusMsg}</div>}
+      {appMode === 'AUDIO' && !loading && <div style={{textAlign:'center', padding: '10px', color: '#27ae60', fontWeight:'bold'}}>▶ Playing Audiobook Mode...</div>}
 
-        {/* --- AUDIOBOOK BUTTON (ENGLISH) --- */}
-        {viewMode === 'PDF' && (
-           <button 
-             onClick={handleReadEnglish} 
-             className={`btn ${isSpeaking ? 'btn-primary' : 'btn-secondary'}`}
-             style={{marginLeft: '10px'}}
-           >
-             {isSpeaking ? '⏹ Stop' : '🔊 Listen'}
-           </button>
-        )}
+      {/* --- CONTROL TOOLBAR --- */}
+      <div className="toolbar" style={{flexWrap: 'wrap', justifyContent: 'center'}}>
+        
+        {/* Navigation */}
+        <button className="btn btn-secondary" disabled={pageNumber <= 1} onClick={handlePrevPage}>← Prev</button>
+        <span className="page-info">Page {pageNumber} / {numPages || '--'}</span>
+        <button className="btn btn-secondary" disabled={pageNumber >= numPages} onClick={() => setPageNumber(p => p+1)}>Next →</button>
+
+        <div style={{width: '20px'}}></div> {/* Spacer */}
+
+        {/* MODE TOGGLES */}
+        <button 
+          onClick={toggleReadMode} 
+          className={`btn ${appMode === 'READ' ? 'btn-primary' : 'btn-secondary'}`}
+        >
+          {appMode === 'READ' ? '📖 Exit Reading' : '📖 Read (Hindi)'}
+        </button>
+
+        <button 
+          onClick={toggleAudioMode} 
+          className={`btn ${appMode === 'AUDIO' ? 'btn-primary' : 'btn-secondary'}`}
+          style={{backgroundColor: appMode === 'AUDIO' ? '#e74c3c' : ''}} // Red when active
+        >
+          {appMode === 'AUDIO' ? '⏹ Stop Audio' : '🎧 Start Audiobook'}
+        </button>
+
       </div>
 
-      {/* --- TRANSLATION BUTTONS --- */}
-      {viewMode === 'PDF' && (
-        <div className="translate-actions" style={{justifyContent: 'center', marginBottom: '20px', gap: '10px', display: 'flex'}}>
-          <button onClick={() => handleTranslate('hi')} disabled={loading} className="lang-btn">🇮🇳 Hindi</button>
-          <button onClick={() => handleTranslate('es')} disabled={loading} className="lang-btn">🇪🇸 Spanish</button>
-          <button onClick={() => handleTranslate('fr')} disabled={loading} className="lang-btn">🇫🇷 French</button>
-        </div>
-      )}
-
-      {/* --- DOCUMENT AREA --- */}
       <div className="document-wrapper">
-        {viewMode === 'PDF' && (
+        
+        {/* --- 1. NORMAL PDF MODE --- */}
+        {appMode === 'NORMAL' && (
            <Document file={file} onLoadSuccess={onDocumentLoadSuccess} loading={<div>Loading novel...</div>}>
              <Page pageNumber={pageNumber} width={pdfWidth} renderTextLayer={true} className="pdf-page-shadow" />
            </Document>
         )}
 
-        {/* --- TRANSLATED TEXT VIEW --- */}
-        {viewMode === 'TEXT' && (
+        {/* --- 2. TRANSLATED / AUDIO VISUAL MODE --- */}
+        {(appMode === 'READ' || appMode === 'AUDIO') && (
           <div className="text-reader fade-in">
              <div className="text-reader-header">
-                <span>Translated Chapter</span>
-                
-                {/* --- AUDIO BUTTON (TRANSLATED) --- */}
-                <button 
-                  onClick={() => isSpeaking ? stopSpeaking() : speakText(translatedText, 'hi')} // Defaulting hint to Hindi logic, but it auto-detects largely
-                  className="btn"
-                  style={{marginRight: 'auto', marginLeft: '15px', padding: '5px 10px', fontSize: '0.9rem'}}
-                >
-                   {isSpeaking ? '⏹ Stop Audio' : '🔊 Read Aloud'}
-                </button>
-
-                <button onClick={() => { stopSpeaking(); setViewMode('PDF'); }} className="close-btn">× Close</button>
+                <span>
+                   {appMode === 'AUDIO' ? '🎧 Listening to Page ' : '📖 Reading Page '} 
+                   {pageNumber} (Hindi)
+                </span>
              </div>
              
-             <div className="text-content">
-               {translatedText.split('\n').map((para, index) => <p key={index}>{para}</p>)}
-             </div>
+             {loading ? (
+               <div style={{padding: '40px', textAlign: 'center', color: '#7f8c8d'}}>
+                 <p>Translating...</p>
+                 <div className="spinner"></div> 
+               </div>
+             ) : (
+               <div className="text-content">
+                 {translatedText.split('\n').map((para, index) => <p key={index}>{para}</p>)}
+               </div>
+             )}
           </div>
         )}
+
       </div>
     </div>
   );
