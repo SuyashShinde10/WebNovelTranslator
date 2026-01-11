@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import axios from 'axios';
 import '../App.css';
@@ -13,17 +13,21 @@ const PdfReader = ({ file }) => {
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [pdfObject, setPdfObject] = useState(null);
-  const [viewMode, setViewMode] = useState('PDF'); // 'PDF' or 'TEXT'
+  const [viewMode, setViewMode] = useState('PDF'); 
   const [translatedText, setTranslatedText] = useState('');
   const [loading, setLoading] = useState(false);
   const [pdfWidth, setPdfWidth] = useState(null);
   
-  // --- NEW: SEARCH PAGE STATE ---
+  // Search State
   const [inputPage, setInputPage] = useState('');
 
-  // --- AUTOMATION STATES ---
+  // Automation State
   const [isAutoPlay, setIsAutoPlay] = useState(false); 
   const isAutoPlayRef = useRef(false); 
+
+  // --- 🚀 PERFORMANCE CACHE ---
+  // Stores translations like: { 1: "Hindi text...", 2: "Hindi text..." }
+  const translationCache = useRef(new Map());
 
   // Mobile Responsive Width
   useEffect(() => {
@@ -36,144 +40,188 @@ const PdfReader = ({ file }) => {
     return () => window.removeEventListener('resize', updateWidth);
   }, []);
 
-  // Sync Ref with State
+  // Sync Ref
   useEffect(() => {
     isAutoPlayRef.current = isAutoPlay;
-    if (!isAutoPlay) {
-      window.speechSynthesis.cancel();
-    }
+    if (!isAutoPlay) window.speechSynthesis.cancel();
   }, [isAutoPlay]);
 
-  // --- AUTOMATION ENGINE ---
-  useEffect(() => {
-    if (isAutoPlay && pdfObject) {
-      runAutoSequence();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageNumber, isAutoPlay, pdfObject]);
-
+  // --- PDF LOADED ---
   function onDocumentLoadSuccess(pdf) {
     setNumPages(pdf.numPages);
     setPdfObject(pdf);
   }
 
-  async function extractTextFromPage(pageNo) {
+  // --- TEXT EXTRACTION ---
+  const extractTextFromPage = useCallback(async (pageNo) => {
     if (!pdfObject) return "";
-    const page = await pdfObject.getPage(pageNo);
-    const textContent = await page.getTextContent();
-    return textContent.items.map(item => item.str).join(' ');
-  }
-
-  // --- CORE FUNCTIONS ---
-  const fetchTranslation = async (text) => {
     try {
-      setLoading(true);
+      const page = await pdfObject.getPage(pageNo);
+      const textContent = await page.getTextContent();
+      return textContent.items.map(item => item.str).join(' ');
+    } catch (e) {
+      console.error("Extraction error:", e);
+      return "";
+    }
+  }, [pdfObject]);
+
+  // --- 🚀 FAST TRANSLATION (With Cache) ---
+  const getTranslation = async (pageNo) => {
+    // 1. Check Cache First (INSTANT LOAD)
+    if (translationCache.current.has(pageNo)) {
+      console.log(`⚡ Cache Hit for Page ${pageNo}`);
+      return translationCache.current.get(pageNo);
+    }
+
+    // 2. If not in cache, fetch from API
+    try {
+      const rawText = await extractTextFromPage(pageNo);
+      if (!rawText.trim()) return "";
+
+      console.log(`🌐 Fetching AI Translation for Page ${pageNo}...`);
       const res = await axios.post('/api/translate', {
-        text: text,
-        targetLang: 'hi' // FORCE HINDI
+        text: rawText,
+        targetLang: 'hi'
       });
-      setLoading(false);
-      return res.data.translatedText;
+
+      const result = res.data.translatedText;
+      
+      // 3. Save to Cache
+      translationCache.current.set(pageNo, result);
+      return result;
+
     } catch (err) {
       console.error(err);
-      setLoading(false);
-      return "Translation failed. Please try again.";
+      return "Translation failed. Network error?";
     }
   };
 
-  const speakText = (text, onComplete) => {
-    window.speechSynthesis.cancel(); 
-    const utterance = new SpeechSynthesisUtterance(text);
-    
-    const voices = window.speechSynthesis.getVoices();
-    const hindiVoice = voices.find(v => v.lang.includes('hi'));
-    if (hindiVoice) utterance.voice = hindiVoice;
+  // --- 🚀 PREFETCHING (The Secret Sauce) ---
+  const prefetchNextPage = async (currentPage) => {
+    const nextPage = currentPage + 1;
+    if (nextPage <= numPages && !translationCache.current.has(nextPage)) {
+      console.log(`🔄 Background Prefetching Page ${nextPage}...`);
+      await getTranslation(nextPage); // This runs silently in background!
+    }
+  };
 
-    utterance.rate = 1.0;
+  // --- MAIN LOGIC ---
+  const loadPageContent = async (pageNum, mode) => {
+    // If in PDF mode, just show PDF. But still prefetch next page for speed!
+    if (mode === 'PDF') {
+      if (pdfObject) prefetchNextPage(pageNum);
+      return;
+    }
 
-    utterance.onend = () => {
-      if (onComplete && isAutoPlayRef.current) {
-        onComplete();
+    // If in Text Mode, get translation
+    setLoading(true);
+    const text = await getTranslation(pageNum);
+    setTranslatedText(text);
+    setLoading(false);
+
+    // ⚡ Start prefetching the NEXT page immediately after showing this one
+    if (pdfObject) prefetchNextPage(pageNum);
+  };
+
+  // --- EFFECT: Handle Page Changes ---
+  useEffect(() => {
+    if (pdfObject) {
+      loadPageContent(pageNumber, viewMode);
+      
+      // Audio Loop Logic
+      if (isAutoPlay) {
+        runAutoSequence();
       }
-    };
-
-    window.speechSynthesis.speak(utterance);
-  };
-
-  const runAutoSequence = async () => {
-    const rawText = await extractTextFromPage(pageNumber);
-    if (!rawText.trim()) {
-       if (pageNumber < numPages) setPageNumber(p => p + 1);
-       return;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageNumber, viewMode, pdfObject, isAutoPlay]);
 
-    const hindiText = await fetchTranslation(rawText);
-    setTranslatedText(hindiText);
-    setViewMode('TEXT'); 
 
+  // --- AUDIO / AUTO PLAY ENGINE ---
+  const runAutoSequence = async () => {
+    // 1. Get Text (Should be instant from cache now)
+    let hindiText = translationCache.current.get(pageNumber);
+    
+    if (!hindiText) {
+      // If user skipped ahead too fast, we wait for fetch
+      hindiText = await getTranslation(pageNumber);
+      setTranslatedText(hindiText);
+    }
+    
+    // Ensure we are in text mode
+    if (viewMode !== 'TEXT') setViewMode('TEXT');
+
+    // 2. Speak
     speakText(hindiText, () => {
+      // 3. On Complete -> Next Page
       if (pageNumber < numPages) {
         setPageNumber(prev => prev + 1);
       } else {
-        setIsAutoPlay(false); 
+        setIsAutoPlay(false);
         alert("Book Completed!");
       }
     });
   };
 
-  // --- NAVIGATION HANDLERS ---
+  const speakText = (text, onComplete) => {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    const voices = window.speechSynthesis.getVoices();
+    // Try to find Google Hindi first (usually better quality)
+    const hindiVoice = voices.find(v => v.name.includes('Google') && v.lang.includes('hi')) 
+                    || voices.find(v => v.lang.includes('hi'));
+    
+    if (hindiVoice) utterance.voice = hindiVoice;
+    utterance.rate = 1.0;
 
-  const changePage = (offset) => {
-    setIsAutoPlay(false); 
-    setPageNumber(prev => prev + offset);
-    setTranslatedText(''); 
-    setViewMode('PDF'); 
+    utterance.onend = () => {
+      if (onComplete && isAutoPlayRef.current) onComplete();
+    };
+
+    window.speechSynthesis.speak(utterance);
   };
 
-  // --- NEW: SEARCH / JUMP TO PAGE FUNCTION ---
+  // --- UI HANDLERS ---
+
+  const changePage = (offset) => {
+    setIsAutoPlay(false);
+    const newPage = pageNumber + offset;
+    if (newPage >= 1 && newPage <= numPages) {
+      setPageNumber(newPage);
+      // viewMode stays the same! If you were reading, you stay reading.
+    }
+  };
+
   const handleJumpToPage = (e) => {
     e.preventDefault();
     const target = parseInt(inputPage);
     if (target >= 1 && target <= numPages) {
-      setIsAutoPlay(false); // Stop audio if jumping
+      setIsAutoPlay(false);
       setPageNumber(target);
-      setTranslatedText(''); // Clear translation
-      setViewMode('PDF'); // Reset to PDF view
-      setInputPage(''); // Clear input
+      setInputPage('');
     } else {
       alert(`Please enter a page between 1 and ${numPages}`);
     }
   };
 
-  // --- FEATURE HANDLERS ---
-
-  const toggleReadMode = async () => {
-    if (viewMode === 'PDF') {
-      setViewMode('TEXT');
-      const text = await extractTextFromPage(pageNumber);
-      const hindi = await fetchTranslation(text);
-      setTranslatedText(hindi);
-    } else {
-      setViewMode('PDF');
-      setTranslatedText('');
-    }
+  const toggleReadMode = () => {
+    const newMode = viewMode === 'PDF' ? 'TEXT' : 'PDF';
+    setViewMode(newMode);
+    // If switching to text, content loads via the Effect hook
   };
 
   const toggleAutoPlay = () => {
-    if (isAutoPlay) {
-      setIsAutoPlay(false); 
-    } else {
-      setIsAutoPlay(true); 
-    }
+    setIsAutoPlay(!isAutoPlay);
   };
 
   return (
     <div className="app-container fade-in">
       
-      {/* --- TOOLBAR --- */}
+      {/* TOOLBAR */}
       <div className="toolbar" style={{display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:'10px'}}>
         
-        {/* 1. Prev/Next Buttons */}
+        {/* Nav */}
         <div style={{display:'flex', gap:'5px', alignItems:'center'}}>
           <button className="btn btn-secondary" disabled={pageNumber <= 1} onClick={() => changePage(-1)}>←</button>
           <span className="page-info" style={{margin:'0 10px', minWidth: '80px', textAlign: 'center'}}>
@@ -182,67 +230,62 @@ const PdfReader = ({ file }) => {
           <button className="btn btn-secondary" disabled={pageNumber >= numPages} onClick={() => changePage(1)}>→</button>
         </div>
 
-        {/* 2. NEW: SEARCH PAGE INPUT */}
+        {/* Search */}
         <form onSubmit={handleJumpToPage} style={{display:'flex', gap:'5px'}}>
           <input 
             type="number" 
             value={inputPage}
             onChange={(e) => setInputPage(e.target.value)}
             placeholder="Go to..."
-            style={{
-              width: '70px', 
-              padding: '6px', 
-              borderRadius: '4px', 
-              border: '1px solid #ccc'
-            }}
+            style={{width: '60px', padding: '6px', borderRadius: '4px', border: '1px solid #ccc'}}
           />
-          <button type="submit" className="btn btn-secondary" style={{padding: '6px 12px'}}>Go</button>
+          <button type="submit" className="btn btn-secondary" style={{padding: '6px 10px'}}>Go</button>
         </form>
 
-        {/* 3. Smart Actions (Read & Audio) */}
+        {/* Actions */}
         <div style={{display:'flex', gap:'10px'}}>
            <button 
              onClick={toggleReadMode} 
              className={`btn ${viewMode === 'TEXT' ? 'btn-primary' : 'btn-secondary'}`}
            >
-             {viewMode === 'TEXT' ? '📄 PDF View' : '🇮🇳 Hindi View'}
+             {viewMode === 'TEXT' ? '📄 View PDF' : '🇮🇳 Read Hindi'}
            </button>
 
            <button 
              onClick={toggleAutoPlay} 
              className={`btn ${isAutoPlay ? 'btn-danger' : 'btn-success'}`} 
-             style={{backgroundColor: isAutoPlay ? '#e74c3c' : '#27ae60', color:'white'}}
            >
              {isAutoPlay ? '⏹ Stop Audio' : '▶ Auto Play'}
            </button>
         </div>
       </div>
 
-      {/* --- CONTENT AREA --- */}
+      {/* CONTENT */}
       <div className="document-wrapper">
         
-        {/* PDF VIEW */}
+        {/* PDF Layer */}
         <div style={{ display: viewMode === 'PDF' ? 'block' : 'none' }}>
            <Document file={file} onLoadSuccess={onDocumentLoadSuccess} loading={<div>Loading novel...</div>}>
              <Page pageNumber={pageNumber} width={pdfWidth} renderTextLayer={true} className="pdf-page-shadow" />
            </Document>
         </div>
 
-        {/* TRANSLATED TEXT VIEW */}
+        {/* Text Layer */}
         <div style={{ display: viewMode === 'TEXT' ? 'block' : 'none' }} className="text-reader fade-in">
            <div className="text-reader-header">
-              <span>📖 Hindi Translation (Page {pageNumber})</span>
-              {loading && <span style={{fontSize:'0.8em', color:'#f39c12'}}> Translating...</span>}
+              <span>📖 Hindi Translation</span>
+              {loading && <span style={{fontSize:'0.8em', color:'#f39c12', marginLeft:'10px'}}> Translating...</span>}
            </div>
            
            <div className="text-content" style={{minHeight:'300px'}}>
              {loading ? (
-               <div style={{textAlign:'center', padding:'20px'}}>
+               <div style={{textAlign:'center', padding:'40px'}}>
                  <div className="spinner"></div> 
-                 <p>Translating to Hindi...</p>
+                 <p style={{marginTop:'15px', color:'#666'}}>Translating Page {pageNumber}...</p>
+                 <small>(Next pages are loading in background)</small>
                </div>
              ) : (
-               translatedText.split('\n').map((para, index) => <p key={index}>{para}</p>)
+               translatedText ? translatedText.split('\n').map((para, index) => <p key={index}>{para}</p>) : "No text found."
              )}
            </div>
         </div>
