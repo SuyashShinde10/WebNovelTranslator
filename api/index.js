@@ -13,11 +13,14 @@ app.use(express.json());
 
 const API_KEY = process.env.GEMINI_API_KEY;
 
-// --- CRITICAL CHANGE: USE 1.5 FLASH (Higher Limits: 15 RPM) ---
+// --- CRITICAL FIX: USE THE STABLE MODEL ---
+// gemini-3-flash does not exist.
+// gemini-2.5-flash has strict rate limits.
+// gemini-1.5-flash is the best for free tier apps.
 const MODEL_NAME = "gemini-1.5-flash"; 
 
 app.get('/', (req, res) => {
-  res.send(`Backend Online. Using safe model: ${MODEL_NAME}`);
+  res.send(`Backend Online. Using model: ${MODEL_NAME}`);
 });
 
 app.post('/api/upload', upload.single('novelPdf'), (req, res) => {
@@ -33,37 +36,46 @@ app.post('/api/translate', async (req, res) => {
   const { text } = req.body;
 
   if (!API_KEY) return res.status(500).json({ error: "No API Key" });
-  if (!text) return res.status(400).json({ error: "No text" });
+  if (!text) return res.status(400).json({ error: "No text provided" });
 
   try {
-    // Standard Request (No loop, safer)
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
+    
+    console.log(`🔄 Sending to ${MODEL_NAME}...`);
     
     const response = await axios.post(url, {
       contents: [{
-        parts: [{ text: `Translate this fiction to casual Hindi: "${text}"` }]
+        parts: [{ text: `Translate this fiction text into casual Hindi (Devanagari). Keep it natural: "${text}"` }]
       }]
     });
 
     const translatedText = response.data.candidates?.[0]?.content?.parts?.[0]?.text;
     
     if (translatedText) {
+      console.log("✅ Translation Success");
       res.json({ translatedText });
     } else {
-      throw new Error("No text returned");
+      throw new Error("No text returned from AI");
     }
 
   } catch (error) {
-    // HANDLE RATE LIMITS GRACEFULLY
-    if (error.response && error.response.status === 429) {
-      console.error("⚠️ RATE LIMIT HIT (429)");
-      return res.status(429).json({ 
-        error: "Too Fast!", 
-        translatedText: "⚠️ You are reading too fast for the free tier. Please wait 1 minute." 
-      });
+    // Check for Rate Limits (429) or Model Not Found (404)
+    if (error.response) {
+      const status = error.response.status;
+      console.error(`⚠️ API Error ${status}:`, JSON.stringify(error.response.data));
+
+      if (status === 429) {
+        return res.status(429).json({ 
+          error: "Too Many Requests", 
+          translatedText: "⚠️ Reading too fast! Please wait 30 seconds." 
+        });
+      }
+      if (status === 404) {
+        return res.status(404).json({ error: "Model Not Found (Check API Key)" });
+      }
     }
     
-    console.error("Error:", error.message);
+    console.error("Server Error:", error.message);
     res.status(500).json({ error: "Translation Failed" });
   }
 });
