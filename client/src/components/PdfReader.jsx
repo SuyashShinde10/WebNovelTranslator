@@ -18,11 +18,7 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
   const [loading, setLoading] = useState(false);
   const [pdfWidth, setPdfWidth] = useState(null);
 
-  // AUTOMATIC URL DETECTION (Works for Localhost AND Vercel)
-  // We ONLY use this for the /api/translate route now
-  const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:5000';
-
-  // 1. Responsive Width
+  // Responsive Width
   useEffect(() => {
     function updateWidth() {
       const width = Math.min(window.innerWidth - 40, 700);
@@ -33,13 +29,11 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
     return () => window.removeEventListener('resize', updateWidth);
   }, []);
 
-  // 2. Document Load Success
   function onDocumentLoadSuccess(pdf) {
     setNumPages(pdf.numPages);
     setPdfObject(pdf);
   }
 
-  // 3. Extract Text
   async function extractTextFromPage(pageNo) {
     if (!pdfObject) return "";
     const page = await pdfObject.getPage(pageNo);
@@ -47,7 +41,6 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
     return textContent.items.map(item => item.str).join(' ');
   }
 
-  // 4. Translate Logic (Sends text to Backend)
   const handleTranslate = async (langCode) => {
     setLoading(true);
     try {
@@ -59,8 +52,9 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
         return;
       }
 
-      // Send ONLY the text to the backend
-      const res = await axios.post(`${API_BASE}/api/translate`, {
+      // THIS IS THE ONLY TIME WE TALK TO THE SERVER
+      // Note: We use relative path '/api/translate' which works automatically on Vercel
+      const res = await axios.post('/api/translate', {
         text: rawText,
         targetLang: langCode
       });
@@ -84,56 +78,34 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
 
   return (
     <div className="app-container fade-in">
-      
-      {/* --- TOOLBAR --- */}
       <div className="toolbar">
-        <button className="btn btn-secondary" disabled={pageNumber <= 1} onClick={() => changePage(-1)}>
-          ← Prev
-        </button>
-        <span className="page-info">
-           Page {pageNumber} <span style={{color:'#b2bec3'}}>/</span> {numPages || '--'}
-        </span>
-        <button className="btn btn-secondary" disabled={pageNumber >= numPages} onClick={() => changePage(1)}>
-          Next →
-        </button>
+        <button className="btn btn-secondary" disabled={pageNumber <= 1} onClick={() => changePage(-1)}>← Prev</button>
+        <span className="page-info">Page {pageNumber} / {numPages || '--'}</span>
+        <button className="btn btn-secondary" disabled={pageNumber >= numPages} onClick={() => changePage(1)}>Next →</button>
 
         {viewMode === 'PDF' && (
           <div className="translate-actions">
             <button onClick={() => handleTranslate('hi')} disabled={loading} className="lang-btn">
               {loading ? '...' : '🇮🇳 Hindi'}
             </button>
-            <button onClick={() => handleTranslate('es')} disabled={loading} className="lang-btn">
+             <button onClick={() => handleTranslate('es')} disabled={loading} className="lang-btn">
               🇪🇸 Spanish
-            </button>
-            <button onClick={() => handleTranslate('fr')} disabled={loading} className="lang-btn">
-              🇫🇷 French
             </button>
           </div>
         )}
       </div>
 
-      {/* --- READER --- */}
       <div className="document-wrapper">
         {viewMode === 'PDF' && (
-           <Document 
-             file={file} // <--- Reads directly from the browser memory!
-             onLoadSuccess={onDocumentLoadSuccess} 
-             loading={<div style={{padding: 20}}>Loading novel...</div>}
-             error={<div style={{color:'red'}}>Failed to load PDF.</div>}
-           >
-             <Page 
-                pageNumber={pageNumber} 
-                width={pdfWidth} 
-                renderTextLayer={true} 
-                className="pdf-page-shadow" 
-             />
+           <Document file={file} onLoadSuccess={onDocumentLoadSuccess} loading={<div>Loading...</div>}>
+             <Page pageNumber={pageNumber} width={pdfWidth} renderTextLayer={true} className="pdf-page-shadow" />
            </Document>
         )}
 
         {viewMode === 'TEXT' && (
           <div className="text-reader fade-in">
              <div className="text-reader-header">
-                <span>Translated Chapter • Page {pageNumber}</span>
+                <span>Translated Chapter</span>
                 <button onClick={() => setViewMode('PDF')} className="close-btn">× Close</button>
              </div>
              <div className="text-content">

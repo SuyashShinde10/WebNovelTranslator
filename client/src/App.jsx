@@ -4,7 +4,7 @@ import PdfReader from './components/PdfReader';
 import './App.css';
 
 function App() {
-  const [currentFile, setCurrentFile] = useState(null); // Now stores the FILE OBJECT, not just a name
+  const [currentFile, setCurrentFile] = useState(null); 
 
   return (
     <div className="app-container">

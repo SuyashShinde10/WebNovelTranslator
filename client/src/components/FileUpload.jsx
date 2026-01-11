@@ -8,9 +8,9 @@ const FileUpload = ({ onFileSelect }) => {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
       setLoading(true);
-      // Simulate a small delay for better UX
+      // Simulate a small delay for better user experience
       setTimeout(() => {
-        onFileSelect(selectedFile); // Pass file to App.js immediately
+        onFileSelect(selectedFile); // Pass file directly to App.js
         setLoading(false);
       }, 800);
     }
