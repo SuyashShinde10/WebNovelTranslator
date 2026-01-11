@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import axios from 'axios';
 import '../App.css'; // Make sure styling is imported
 
 // Configure PDF Worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
@@ -15,14 +16,33 @@ const PdfReader = ({ filename }) => {
   const [viewMode, setViewMode] = useState('PDF'); 
   const [translatedText, setTranslatedText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [pdfWidth, setPdfWidth] = useState(null); // Mobile Responsive State
 
-  const fileUrl = `http://localhost:5000/api/read-novel/${filename}`;
+  // AUTOMATIC URL DETECTION (Works for Localhost AND Vercel)
+  const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:5000';
+  const fileUrl = `${API_BASE}/api/read-novel/${filename}`;
 
+  // 1. Responsive Width Calculation
+  useEffect(() => {
+    function updateWidth() {
+      // Mobile padding: 40px total. Max desktop width: 700px.
+      const width = Math.min(window.innerWidth - 40, 700);
+      setPdfWidth(width);
+    }
+    
+    // Run immediately and listen for resize
+    updateWidth();
+    window.addEventListener('resize', updateWidth);
+    return () => window.removeEventListener('resize', updateWidth);
+  }, []);
+
+  // 2. Document Load Success
   function onDocumentLoadSuccess(pdf) {
     setNumPages(pdf.numPages);
     setPdfObject(pdf);
   }
 
+  // 3. Extract Text Logic
   async function extractTextFromPage(pageNo) {
     if (!pdfObject) return "";
     const page = await pdfObject.getPage(pageNo);
@@ -30,6 +50,7 @@ const PdfReader = ({ filename }) => {
     return textContent.items.map(item => item.str).join(' ');
   }
 
+  // 4. Translate Logic
   const handleTranslate = async (langCode) => {
     setLoading(true);
     try {
@@ -41,7 +62,8 @@ const PdfReader = ({ filename }) => {
         return;
       }
 
-      const res = await axios.post('http://localhost:5000/api/translate', {
+      // Use API_BASE here too!
+      const res = await axios.post(`${API_BASE}/api/translate`, {
         text: rawText,
         targetLang: langCode
       });
@@ -57,6 +79,7 @@ const PdfReader = ({ filename }) => {
     }
   };
 
+  // 5. Change Page Logic
   const changePage = (offset) => {
     setPageNumber(prev => prev + offset);
     setViewMode('PDF'); 
@@ -109,10 +132,15 @@ const PdfReader = ({ filename }) => {
         
         {/* PDF VIEW */}
         {viewMode === 'PDF' && (
-           <Document file={fileUrl} onLoadSuccess={onDocumentLoadSuccess} loading="Loading novel...">
+           <Document 
+             file={fileUrl} 
+             onLoadSuccess={onDocumentLoadSuccess} 
+             loading={<div style={{padding: 20}}>Loading novel...</div>}
+             error={<div style={{color:'red'}}>Failed to load PDF.</div>}
+           >
              <Page 
                 pageNumber={pageNumber} 
-                width={700} // Increased width for better reading
+                width={pdfWidth}  /* Uses the calculated width for Mobile */
                 renderTextLayer={true}
                 className="pdf-page-shadow" 
              />
