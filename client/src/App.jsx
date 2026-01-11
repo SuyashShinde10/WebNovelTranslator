@@ -1,5 +1,5 @@
 import React from 'react';
-import PdfReader from './PdfReader.jsx';
+import PdfReader from './components/PdfReader.jsx';
 
 // Example PDF file (replace with your local file or URL)
 import myPdf from './assets/sample.pdf'; 
