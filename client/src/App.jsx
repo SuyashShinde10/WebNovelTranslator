@@ -2,7 +2,7 @@ import React from 'react';
 import PdfReader from './components/PdfReader.jsx';
 
 // Example PDF file (replace with your local file or URL)
-import myPdf from './assets/sample.pdf'; 
+ 
 
 function App() {
   return (
@@ -11,9 +11,9 @@ function App() {
       
       {/* Pass a unique bookId so bookmarks are saved specifically for this file */}
       <PdfReader 
-        pdfUrl={myPdf} 
-        bookId="lotm-vol-1" 
-      />
+  pdfUrl="https://pdfobject.com/pdf/sample.pdf" 
+  bookId="lotm-vol-1" 
+/>
     </div>
   );
 }
