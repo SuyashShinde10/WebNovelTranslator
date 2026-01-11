@@ -2,118 +2,90 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const multer = require('multer');
 
 const app = express();
+const upload = multer({ dest: 'uploads/' });
 
-// Allow CORS from anywhere
-app.use(cors({ origin: "*" }));
+app.use(cors());
 app.use(express.json());
 
+// --- CONFIGURATION ---
 const API_KEY = process.env.GEMINI_API_KEY;
-const BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+// UPDATED: Using the specific model you requested
+const MODEL_NAME = "gemini-2.5-flash"; 
 
-// --- 1. UPDATED MODEL LIST (Your suggestion is first!) ---
-const MODEL_CASCADE = [
-    'gemini-2.5-flash',       // <--- Trying your suggestion first!
-    'gemini-2.0-flash',       // <--- Likely alternative
-    'gemini-1.5-flash',
-    'gemini-1.5-pro',
-    'gemini-pro',
-    'gemini-1.0-pro'
-];
-
-// Helper: Try to generate text with a specific model
-async function tryTranslate(modelName, promptText) {
-    // Ensure we strip "models/" if Google gave us the full ID
-    const cleanName = modelName.replace('models/', '');
-    const url = `${BASE_URL}/models/${cleanName}:generateContent?key=${API_KEY}`;
-    
-    const response = await axios.post(url, {
-        contents: [{ parts: [{ text: promptText }] }]
-    }, { headers: { 'Content-Type': 'application/json' } });
-    
-    return response.data.candidates[0].content.parts[0].text;
-}
-
-// Helper: Fetch ANY valid model from Google if our hardcoded list fails
-async function fetchValidModel() {
-    try {
-        console.log("⚠️ Cascade failed. Fetching available models list from Google...");
-        const response = await axios.get(`${BASE_URL}/models?key=${API_KEY}`);
-        const models = response.data.models || [];
-        
-        // Find the first model that supports 'generateContent'
-        const workingModel = models.find(m => 
-            m.supportedGenerationMethods && 
-            m.supportedGenerationMethods.includes('generateContent')
-        );
-        
-        if (workingModel) return workingModel.name;
-        return null;
-    } catch (err) {
-        console.error("Failed to fetch model list:", err.message);
-        return null;
-    }
+// --- CHECK API KEY ---
+if (!API_KEY) {
+  console.error("❌ CRITICAL: GEMINI_API_KEY is missing in .env file.");
+} else {
+  console.log(`✅ API Key loaded. Target Model: ${MODEL_NAME}`);
 }
 
 // --- ROUTES ---
 
 app.get('/', (req, res) => {
-    res.send("Backend is running! (Checking gemini-2.5-flash first)");
+  res.send(`Backend Running. Model: ${MODEL_NAME}`);
+});
+
+app.post('/api/upload', upload.single('novelPdf'), (req, res) => {
+  if (req.file) {
+    console.log(`📂 File Uploaded: ${req.file.originalname}`);
+    res.json({ filename: req.file.originalname });
+  } else {
+    res.status(400).json({ error: "No file uploaded" });
+  }
 });
 
 app.post('/api/translate', async (req, res) => {
-    const { text, targetLang } = req.body;
-    if (!text) return res.status(400).json({ error: 'No text provided' });
+  const { text, targetLang } = req.body;
 
-    console.log(`AI Translating to ${targetLang}...`);
+  if (!API_KEY) return res.status(500).json({ error: "Server missing API Key" });
+  if (!text) return res.status(400).json({ error: "No text provided" });
 
-    let promptText = "";
-    if (targetLang === 'hi') {
-        promptText = `Translate the following fiction text into casual, daily-spoken Hindi (Hindustani). Do NOT use complex Sanskrit words. Text: "${text}"`;
-    } else {
-        promptText = `Translate the following text into ${targetLang}:\n\n"${text}"`;
-    }
+  console.log(`🔄 Sending to ${MODEL_NAME}...`);
 
-    // PHASE 1: Try the Cascade (Starts with 2.5-flash)
-    for (const modelName of MODEL_CASCADE) {
-        try {
-            console.log(`👉 Trying model: ${modelName}...`);
-            const result = await tryTranslate(modelName, promptText);
-            console.log(`✅ Success with ${modelName}!`);
-            return res.json({ original: text, translatedText: result, lang: targetLang });
-        } catch (err) {
-            console.log(`❌ ${modelName} failed. Trying next...`);
-            // Continue loop...
-        }
-    }
-
-    // PHASE 2: Emergency Fallback (Ask Google what we can use)
-    try {
-        const fallbackModel = await fetchValidModel();
-        if (fallbackModel) {
-            console.log(`👉 Trying fallback model from account: ${fallbackModel}...`);
-            const result = await tryTranslate(fallbackModel, promptText);
-            console.log(`✅ Success with fallback: ${fallbackModel}!`);
-            return res.json({ original: text, translatedText: result, lang: targetLang });
-        }
-    } catch (err) {
-        console.error("❌ Fallback failed:", err.message);
-    }
-
-    // If we get here, absolutely nothing worked.
-    res.status(500).json({ 
-        error: 'Translation Failed', 
-        details: 'No working AI models found for this API Key.' 
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
+    
+    const response = await axios.post(url, {
+      contents: [{
+        parts: [{ 
+          text: `Translate this fiction text into casual Hindi (Devanagari). Keep the flow natural: "${text}"` 
+        }]
+      }]
     });
+
+    const translatedText = response.data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (translatedText) {
+      console.log("✅ Translation Success!");
+      res.json({ translatedText });
+    } else {
+      throw new Error("Empty response from AI");
+    }
+
+  } catch (error) {
+    console.error("❌ AI Error Details:");
+    if (error.response) {
+      console.error(`Status: ${error.response.status}`);
+      console.error(JSON.stringify(error.response.data, null, 2));
+      
+      // If 404, it means 'gemini-2.5-flash' might be restricted on your key
+      if (error.response.status === 404) {
+        console.error("⚠️ HINT: This account might not have access to gemini-2.5-flash yet.");
+      }
+      
+      res.status(500).json({ 
+        error: "AI Model Error", 
+        details: error.response.data 
+      });
+    } else {
+      console.error(error.message);
+      res.status(500).json({ error: "Server Error", details: error.message });
+    }
+  }
 });
 
-// VERCEL EXPORT
-if (process.env.VERCEL) {
-    module.exports = app;
-} else {
-    const PORT = 5000;
-    app.listen(PORT, () => {
-        console.log(`Server running locally on http://localhost:${PORT}`);
-    });
-}
+const PORT = 5000;
+app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
