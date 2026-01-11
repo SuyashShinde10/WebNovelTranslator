@@ -1,91 +1,72 @@
 require('dotenv').config();
 const express = require('express');
-const multer = require('multer');
 const cors = require('cors');
-const path = require('path');
-const fs = require('fs');
 const axios = require('axios');
-const os = require('os'); // Import OS to find the temporary directory
 
 const app = express();
 
-// Allow CORS from anywhere (since Vercel domains change)
+// Allow CORS from anywhere
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 const API_KEY = process.env.GEMINI_API_KEY;
-let ACTIVE_MODEL = 'gemini-pro';
+const BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
-// --- 1. MODEL DETECTION (Same as before) ---
-async function findWorkingModel() {
-    // ... (Keep your existing findWorkingModel logic here) ...
-    // For brevity, assuming gemini-pro if checking fails on serverless boot
+// --- 1. UPDATED MODEL LIST (Your suggestion is first!) ---
+const MODEL_CASCADE = [
+    'gemini-2.5-flash',       // <--- Trying your suggestion first!
+    'gemini-2.0-flash',       // <--- Likely alternative
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+    'gemini-pro',
+    'gemini-1.0-pro'
+];
+
+// Helper: Try to generate text with a specific model
+async function tryTranslate(modelName, promptText) {
+    // Ensure we strip "models/" if Google gave us the full ID
+    const cleanName = modelName.replace('models/', '');
+    const url = `${BASE_URL}/models/${cleanName}:generateContent?key=${API_KEY}`;
+    
+    const response = await axios.post(url, {
+        contents: [{ parts: [{ text: promptText }] }]
+    }, { headers: { 'Content-Type': 'application/json' } });
+    
+    return response.data.candidates[0].content.parts[0].text;
 }
-// Trigger check (Note: In serverless, this runs on every request)
-findWorkingModel();
 
-// --- 2. VERCEL STORAGE SETUP (/tmp) ---
-// Vercel works differently. We cannot use a persistent 'uploads' folder.
-// We must use the system's temporary directory.
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    // Use the system temp folder (works on Vercel and Localhost)
-    const uploadPath = os.tmpdir(); 
-    cb(null, uploadPath);
-  },
-  filename: function (req, file, cb) {
-    const safeName = file.originalname.replace(/\s+/g, '_');
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + '-' + safeName);
-  }
-});
-const upload = multer({ storage: storage });
+// Helper: Fetch ANY valid model from Google if our hardcoded list fails
+async function fetchValidModel() {
+    try {
+        console.log("⚠️ Cascade failed. Fetching available models list from Google...");
+        const response = await axios.get(`${BASE_URL}/models?key=${API_KEY}`);
+        const models = response.data.models || [];
+        
+        // Find the first model that supports 'generateContent'
+        const workingModel = models.find(m => 
+            m.supportedGenerationMethods && 
+            m.supportedGenerationMethods.includes('generateContent')
+        );
+        
+        if (workingModel) return workingModel.name;
+        return null;
+    } catch (err) {
+        console.error("Failed to fetch model list:", err.message);
+        return null;
+    }
+}
 
 // --- ROUTES ---
 
 app.get('/', (req, res) => {
-    res.send("Backend is running!");
-});
-
-app.post('/api/upload', upload.single('novelPdf'), (req, res) => {
-  if (!req.file) return res.status(400).send('No file uploaded.');
-  // Return the filename so frontend can request it later
-  res.json({ filename: req.file.filename, originalName: req.file.originalname });
-});
-
-app.get('/api/read-novel/:filename', (req, res) => {
-    // Look in the temp folder
-    const filePath = path.join(os.tmpdir(), req.params.filename);
-    
-    if (!fs.existsSync(filePath)) {
-        return res.status(404).send('File not found (Vercel storage is temporary!)');
-    }
-    
-    // ... (Keep your existing Streaming Logic here) ...
-    const stat = fs.statSync(filePath);
-    const fileSize = stat.size;
-    const range = req.headers.range;
-
-    if (range) {
-        const parts = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-        const chunksize = (end - start) + 1;
-        const file = fs.createReadStream(filePath, { start, end });
-        const head = { 'Content-Range': `bytes ${start}-${end}/${fileSize}`, 'Accept-Ranges': 'bytes', 'Content-Length': chunksize, 'Content-Type': 'application/pdf' };
-        res.writeHead(206, head);
-        file.pipe(res);
-    } else {
-        res.writeHead(200, { 'Content-Length': fileSize, 'Content-Type': 'application/pdf' });
-        fs.createReadStream(filePath).pipe(res);
-    }
+    res.send("Backend is running! (Checking gemini-2.5-flash first)");
 });
 
 app.post('/api/translate', async (req, res) => {
-    // ... (Keep your existing Translation Logic here) ...
-    // Copy the exact logic from the previous step.
-     const { text, targetLang } = req.body;
+    const { text, targetLang } = req.body;
     if (!text) return res.status(400).json({ error: 'No text provided' });
+
+    console.log(`AI Translating to ${targetLang}...`);
 
     let promptText = "";
     if (targetLang === 'hi') {
@@ -94,22 +75,40 @@ app.post('/api/translate', async (req, res) => {
         promptText = `Translate the following text into ${targetLang}:\n\n"${text}"`;
     }
 
-    try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${ACTIVE_MODEL}:generateContent?key=${API_KEY}`;
-        const response = await axios.post(url, {
-            contents: [{ parts: [{ text: promptText }] }]
-        }, { headers: { 'Content-Type': 'application/json' } });
-
-        const translatedText = response.data.candidates[0].content.parts[0].text;
-        res.json({ original: text, translatedText: translatedText, lang: targetLang });
-
-    } catch (err) {
-        res.status(500).json({ error: 'Translation failed', details: err.message });
+    // PHASE 1: Try the Cascade (Starts with 2.5-flash)
+    for (const modelName of MODEL_CASCADE) {
+        try {
+            console.log(`👉 Trying model: ${modelName}...`);
+            const result = await tryTranslate(modelName, promptText);
+            console.log(`✅ Success with ${modelName}!`);
+            return res.json({ original: text, translatedText: result, lang: targetLang });
+        } catch (err) {
+            console.log(`❌ ${modelName} failed. Trying next...`);
+            // Continue loop...
+        }
     }
+
+    // PHASE 2: Emergency Fallback (Ask Google what we can use)
+    try {
+        const fallbackModel = await fetchValidModel();
+        if (fallbackModel) {
+            console.log(`👉 Trying fallback model from account: ${fallbackModel}...`);
+            const result = await tryTranslate(fallbackModel, promptText);
+            console.log(`✅ Success with fallback: ${fallbackModel}!`);
+            return res.json({ original: text, translatedText: result, lang: targetLang });
+        }
+    } catch (err) {
+        console.error("❌ Fallback failed:", err.message);
+    }
+
+    // If we get here, absolutely nothing worked.
+    res.status(500).json({ 
+        error: 'Translation Failed', 
+        details: 'No working AI models found for this API Key.' 
+    });
 });
 
-// --- IMPORTANT FOR VERCEL ---
-// Export the app instead of listening if running on Vercel
+// VERCEL EXPORT
 if (process.env.VERCEL) {
     module.exports = app;
 } else {
