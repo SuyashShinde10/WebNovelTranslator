@@ -18,7 +18,7 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
   const [loading, setLoading] = useState(false);
   const [pdfWidth, setPdfWidth] = useState(null);
 
-  // Responsive Width
+  // Responsive Width Calculation
   useEffect(() => {
     function updateWidth() {
       const width = Math.min(window.innerWidth - 40, 700);
@@ -53,7 +53,7 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
       }
 
       // THIS IS THE ONLY TIME WE TALK TO THE SERVER
-      // Note: We use relative path '/api/translate' which works automatically on Vercel
+      // usage of relative path '/api/translate' makes it work on Vercel automatically
       const res = await axios.post('/api/translate', {
         text: rawText,
         targetLang: langCode
@@ -97,7 +97,7 @@ const PdfReader = ({ file }) => { // Receives 'file' object directly
 
       <div className="document-wrapper">
         {viewMode === 'PDF' && (
-           <Document file={file} onLoadSuccess={onDocumentLoadSuccess} loading={<div>Loading...</div>}>
+           <Document file={file} onLoadSuccess={onDocumentLoadSuccess} loading={<div>Loading novel...</div>}>
              <Page pageNumber={pageNumber} width={pdfWidth} renderTextLayer={true} className="pdf-page-shadow" />
            </Document>
         )}

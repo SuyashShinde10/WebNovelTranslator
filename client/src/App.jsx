@@ -14,7 +14,7 @@ function App() {
       </header>
       
       {!currentFile ? (
-        // Pass the function to save the whole file
+        // Pass the function to save the whole file object
         <FileUpload onFileSelect={(file) => setCurrentFile(file)} />
       ) : (
         <div className="fade-in">
