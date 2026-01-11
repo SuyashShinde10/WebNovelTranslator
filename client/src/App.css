@@ -1,12 +1,15 @@
-/* client/src/App.css */
-
-/* 1. GLOBAL RESET - Forces Dark Mode on the whole page */
+ /* --- 1. GLOBAL VARIABLES & RESET --- */
 :root {
-  --bg-dark: #121212;       /* Very dark grey */
-  --bg-card: #1e1e1e;       /* Card background */
-  --primary: #bb86fc;       /* Purple accent */
+  --bg-dark: #121212;       /* Main Background */
+  --bg-card: #1e1e1e;       /* Card/Panel Background */
+  --bg-toolbar: #2d2d2d;    /* Toolbar Background */
+  --primary: #6c5ce7;       /* Primary Action Color (Purple) */
+  --primary-hover: #5649c0;
+  --secondary: #b2bec3;     /* Secondary Text/Button */
   --text-main: #ffffff;
-  --text-muted: #b0b0b0;
+  --text-muted: #a4b0be;
+  --danger: #ff7675;        /* Red (Stop/Close) */
+  --success: #00b894;       /* Green (Start/Play) */
 }
 
 html, body, #root {
@@ -14,159 +17,230 @@ html, body, #root {
   padding: 0;
   width: 100%;
   height: 100%;
-  background-color: var(--bg-dark); /* CRITICAL: Sets background color */
+  background-color: var(--bg-dark);
   color: var(--text-main);
-  font-family: 'Segoe UI', sans-serif;
-  overflow-x: hidden;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  overflow-x: hidden; /* Prevent horizontal scroll on body */
 }
 
-/* 2. LAYOUT CONTAINERS */
+/* --- 2. ANIMATIONS --- */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+/* --- 3. LAYOUT CONTAINERS --- */
+.app-root {
+  width: 100vw;
+  min-height: 100vh;
+}
+
 .app-container {
   display: flex;
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  width: 100%;
   padding: 20px;
-  box-sizing: border-box;
 }
 
-/* 3. UPLOAD CARD (The Box) */
+/* --- 4. FILE UPLOAD CARD --- */
 .upload-card {
   background-color: var(--bg-card);
   padding: 40px;
   border-radius: 16px;
   width: 100%;
-  max-width: 500px;
+  max-width: 450px;
   text-align: center;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.5); /* Deep shadow */
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
   border: 1px solid #333;
 }
 
-.upload-header h2 {
-  font-size: 2rem;
-  margin-bottom: 10px;
-  color: var(--primary);
+.upload-icon {
+  font-size: 4rem;
+  margin-bottom: 15px;
+  display: block;
 }
 
-/* 4. DRAG & DROP ZONE */
-.drop-zone {
-  margin-top: 30px;
-  border: 2px dashed #444;
-  background-color: #181818;
-  border-radius: 12px;
-  padding: 40px 20px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  min-height: 150px;
+.upload-card h2 {
+  margin: 0 0 10px 0;
+  color: var(--text-main);
+}
+
+.file-input-wrapper {
+  margin: 30px 0;
+}
+
+/* --- 5. PDF READER LAYOUT --- */
+.reader-view {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  align-items: center;
+  height: 100vh; /* Full screen height */
+  overflow: hidden; /* Prevent double scrollbars */
 }
 
-.drop-zone:hover {
-  border-color: var(--primary);
-  background-color: #252525;
-}
-
-.drop-zone.has-file {
-  border-style: solid;
-  border-color: #00e676; /* Green when file selected */
-  background-color: #1a2f1a;
-}
-
-/* 5. BUTTONS */
-.btn-primary {
-  margin-top: 25px;
-  width: 100%;
-  padding: 15px;
-  background-color: var(--primary);
-  color: #000;
-  font-weight: bold;
-  font-size: 1.1rem;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: transform 0.1s;
-}
-
-.btn-primary:hover {
-  filter: brightness(1.1);
-  transform: scale(1.02);
-}
-
-.btn-browse {
-  background: #333;
-  color: white;
-  border: 1px solid #555;
-  padding: 8px 16px;
-  border-radius: 20px;
-  margin-top: 15px;
-  cursor: pointer;
-}
-
-/* 6. READER UI (Fixes the PDF View) */
-.reader-container {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  width: 100vw;
-  background-color: #121212;
-}
-
+/* Toolbar at the top */
 .toolbar {
-  height: 70px;
-  background-color: #1f1f1f;
-  border-bottom: 1px solid #333;
+  height: 60px;
+  background-color: var(--bg-toolbar);
+  border-bottom: 1px solid #444;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
   position: sticky;
   top: 0;
-  z-index: 50;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+  z-index: 100;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
 }
 
+.page-info {
+  margin: 0 15px;
+  font-weight: bold;
+  color: var(--text-muted);
+}
+
+/* The scrollable area for the PDF/Text */
 .document-wrapper {
   flex: 1;
-  overflow-y: auto; /* Allows scrolling */
+  overflow-y: auto; /* Allows scrolling inside this area */
+  background-color: #000; /* Darker background behind the page */
   display: flex;
   justify-content: center;
-  padding: 30px;
-  background-color: #0e0e0e; /* Dark background behind PDF */
+  padding: 30px 20px 80px 20px; /* Bottom padding for mobile space */
+  position: relative;
 }
 
-/* PDF Page Shadow */
-.react-pdf__Page canvas {
-  box-shadow: 0 0 20px rgba(0,0,0,0.5) !important;
+/* --- 6. PDF PAGE STYLING --- */
+/* Target the canvas generated by React-PDF */
+.react-pdf__Page__canvas {
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.5) !important;
+  border-radius: 4px;
   max-width: 100%;
   height: auto !important;
 }
 
-/* Text Reader Area */
+/* Loading state */
+.react-pdf__Page__textContent {
+  display: none !important; /* Optional: hides selectable text layer if it causes alignment issues */
+}
+
+/* --- 7. TEXT / TRANSLATION VIEW --- */
 .text-reader {
+  width: 100%;
   max-width: 800px;
-  background-color: #1e1e1e;
+  background-color: var(--bg-card);
   padding: 40px;
-  border-radius: 8px;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  align-self: flex-start; /* Prevents stretching */
+}
+
+.text-reader-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #333;
+  padding-bottom: 15px;
+  margin-bottom: 20px;
+  color: var(--primary);
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+.text-content p {
   line-height: 1.8;
-  font-size: 18px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  font-size: 1.1rem;
+  margin-bottom: 20px;
+  color: #e0e0e0;
+}
+
+/* --- 8. BUTTONS --- */
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-primary {
+  background-color: var(--primary);
+  color: white;
+}
+.btn-primary:hover {
+  background-color: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background-color: #444;
+  color: white;
+}
+.btn-secondary:hover:not(:disabled) {
+  background-color: #555;
+}
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lang-btn {
+  background: transparent;
+  border: 1px solid #444;
+  color: var(--text-muted);
+  padding: 5px 10px;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+.lang-btn:hover {
+  border-color: var(--primary);
+  color: white;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  color: var(--danger);
+  cursor: pointer;
+  font-weight: bold;
 }
 
 /* Spinner */
-.spinner-small {
-  display: inline-block;
-  width: 15px;
-  height: 15px;
-  border: 2px solid rgba(0,0,0,0.3);
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
   border-radius: 50%;
-  border-top-color: #000;
+  border-top-color: white;
   animation: spin 1s linear infinite;
+  display: inline-block;
+  margin-right: 8px;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
 
-.fade-in { animation: fadeIn 0.5s ease-in; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Mobile Adjustments */
+@media (max-width: 600px) {
+  .toolbar {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 10px;
+    gap: 10px;
+    justify-content: center;
+  }
+  
+  .document-wrapper {
+    padding: 10px;
+  }
+}
