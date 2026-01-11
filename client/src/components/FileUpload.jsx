@@ -23,13 +23,15 @@ const FileUpload = ({ onUploadSuccess }) => {
 
     setLoading(true);
     try {
-      const res = await axios.post('http://localhost:5000/api/upload', formData, {
+      // CHANGED: Used relative path '/api/upload' instead of localhost
+      // This ensures it works on Vercel production automatically
+      const res = await axios.post('/api/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       if (onUploadSuccess) onUploadSuccess(res.data.filename);
     } catch (err) {
       console.error(err);
-      setMessage('Upload failed. Is the server running?');
+      setMessage('Upload failed.');
     } finally {
       setLoading(false);
     }
@@ -41,7 +43,7 @@ const FileUpload = ({ onUploadSuccess }) => {
         <div className="upload-icon">📚</div>
         <h2>Upload Your Web Novel</h2>
         <p style={{color: '#636e72', marginBottom: '30px'}}>
-          Select a PDF to start reading with AI translation.
+          Select a PDF to start reading with AI Hindi translation.
         </p>
 
         <div className="file-input-wrapper">

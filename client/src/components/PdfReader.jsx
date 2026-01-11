@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import axios from 'axios';
 import '../App.css';
@@ -9,15 +9,18 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/b
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-const PdfReader = ({ file }) => { 
+const PdfReader = ({ file }) => {
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [pdfObject, setPdfObject] = useState(null);
-  const [viewMode, setViewMode] = useState('PDF'); 
+  const [viewMode, setViewMode] = useState('PDF'); // 'PDF' or 'TEXT'
   const [translatedText, setTranslatedText] = useState('');
   const [loading, setLoading] = useState(false);
   const [pdfWidth, setPdfWidth] = useState(null);
-  const [isSpeaking, setIsSpeaking] = useState(false); // New State for Audio
+  
+  // --- AUTOMATION STATES ---
+  const [isAutoPlay, setIsAutoPlay] = useState(false); // Controls the continuous loop
+  const isAutoPlayRef = useRef(false); // Ref to access state inside event listeners
 
   // Mobile Responsive Width
   useEffect(() => {
@@ -30,10 +33,23 @@ const PdfReader = ({ file }) => {
     return () => window.removeEventListener('resize', updateWidth);
   }, []);
 
-  // Stop audio when component unmounts
+  // Sync Ref with State (for use inside audio callbacks)
   useEffect(() => {
-    return () => window.speechSynthesis.cancel();
-  }, []);
+    isAutoPlayRef.current = isAutoPlay;
+    // If user stops auto-play manually, cancel speech
+    if (!isAutoPlay) {
+      window.speechSynthesis.cancel();
+    }
+  }, [isAutoPlay]);
+
+  // --- AUTOMATION ENGINE ---
+  // Triggers whenever pageNumber changes IF AutoPlay is active
+  useEffect(() => {
+    if (isAutoPlay && pdfObject) {
+      runAutoSequence();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageNumber, isAutoPlay, pdfObject]);
 
   function onDocumentLoadSuccess(pdf) {
     setNumPages(pdf.numPages);
@@ -47,145 +63,169 @@ const PdfReader = ({ file }) => {
     return textContent.items.map(item => item.str).join(' ');
   }
 
-  // --- AUDIO FUNCTION ---
-  const speakText = (text, langCode) => {
-    // 1. Stop any current speech
-    window.speechSynthesis.cancel();
-    setIsSpeaking(true);
+  // --- CORE FUNCTIONS ---
 
+  // 1. Translation Logic
+  const fetchTranslation = async (text) => {
+    try {
+      setLoading(true);
+      // Use relative path '/api/translate' for Vercel support
+      const res = await axios.post('/api/translate', {
+        text: text,
+        targetLang: 'hi' // FORCE HINDI
+      });
+      setLoading(false);
+      return res.data.translatedText;
+    } catch (err) {
+      console.error(err);
+      setLoading(false);
+      return "Translation failed. Please try again.";
+    }
+  };
+
+  // 2. Speech Logic
+  const speakText = (text, onComplete) => {
+    window.speechSynthesis.cancel(); // Stop previous
     const utterance = new SpeechSynthesisUtterance(text);
     
-    // 2. Try to find a matching voice (e.g., Hindi voice for 'hi')
+    // Find Hindi Voice
     const voices = window.speechSynthesis.getVoices();
-    const targetVoice = voices.find(v => v.lang.startsWith(langCode));
-    if (targetVoice) utterance.voice = targetVoice;
+    const hindiVoice = voices.find(v => v.lang.includes('hi'));
+    if (hindiVoice) utterance.voice = hindiVoice;
 
-    // 3. Configure speed/pitch
-    utterance.rate = 1.0; 
-    utterance.pitch = 1.0;
+    utterance.rate = 1.0;
 
-    // 4. Handle End of Speech
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    // EVENT: When audio finishes
+    utterance.onend = () => {
+      if (onComplete && isAutoPlayRef.current) {
+        onComplete();
+      }
+    };
 
     window.speechSynthesis.speak(utterance);
   };
 
-  const stopSpeaking = () => {
-    window.speechSynthesis.cancel();
-    setIsSpeaking(false);
-  };
-
-  // --- ACTIONS ---
-
-  const handleReadEnglish = async () => {
-    if (isSpeaking) {
-      stopSpeaking();
-      return;
+  // 3. The "Auto Loop" Logic
+  const runAutoSequence = async () => {
+    // Step A: Extract Text
+    const rawText = await extractTextFromPage(pageNumber);
+    if (!rawText.trim()) {
+       // If empty page, skip to next
+       if (pageNumber < numPages) setPageNumber(p => p + 1);
+       return;
     }
-    const text = await extractTextFromPage(pageNumber);
-    if (text.trim()) {
-      speakText(text, 'en'); // Read in English
-    } else {
-      alert("No text found on this page to read.");
-    }
-  };
 
-  const handleTranslate = async (langCode) => {
-    stopSpeaking(); // Stop any audio first
-    setLoading(true);
-    try {
-      const rawText = await extractTextFromPage(pageNumber);
-      if (!rawText.trim()) {
-        alert("This page appears to be an image. Cannot extract text!");
-        setLoading(false);
-        return;
+    // Step B: Translate to Hindi (Auto)
+    const hindiText = await fetchTranslation(rawText);
+    setTranslatedText(hindiText);
+    setViewMode('TEXT'); // Force Text Mode to show what's being read
+
+    // Step C: Speak & Wait for Finish
+    speakText(hindiText, () => {
+      // Step D: On Finish, Go Next
+      if (pageNumber < numPages) {
+        setPageNumber(prev => prev + 1);
+      } else {
+        setIsAutoPlay(false); // Stop at end of book
+        alert("Book Completed!");
       }
+    });
+  };
 
-      const res = await axios.post('/api/translate', {
-        text: rawText,
-        targetLang: langCode
-      });
+  // --- USER BUTTON HANDLERS ---
 
-      setTranslatedText(res.data.translatedText);
+  // User clicks "Read Mode" -> Auto Translate current page
+  const toggleReadMode = async () => {
+    if (viewMode === 'PDF') {
       setViewMode('TEXT');
+      const text = await extractTextFromPage(pageNumber);
+      const hindi = await fetchTranslation(text);
+      setTranslatedText(hindi);
+    } else {
+      setViewMode('PDF');
+      setTranslatedText('');
+    }
+  };
 
-    } catch (err) {
-      console.error(err);
-      alert("Translation failed. Check backend console.");
-    } finally {
-      setLoading(false);
+  // User clicks "Audio Book" -> Starts the Loop
+  const toggleAutoPlay = () => {
+    if (isAutoPlay) {
+      setIsAutoPlay(false); // Stop
+    } else {
+      setIsAutoPlay(true); // Start Loop (triggers useEffect)
     }
   };
 
   const changePage = (offset) => {
-    stopSpeaking(); // Stop audio when turning page
+    setIsAutoPlay(false); // Manual navigation stops auto-play
     setPageNumber(prev => prev + offset);
-    setViewMode('PDF'); 
-    setTranslatedText('');
+    setTranslatedText(''); // Clear old text
+    setViewMode('PDF'); // Revert to PDF view on manual change
   };
 
   return (
     <div className="app-container fade-in">
       
       {/* --- TOOLBAR --- */}
-      <div className="toolbar">
-        <button className="btn btn-secondary" disabled={pageNumber <= 1} onClick={() => changePage(-1)}>←</button>
-        <span className="page-info">Page {pageNumber} / {numPages || '--'}</span>
-        <button className="btn btn-secondary" disabled={pageNumber >= numPages} onClick={() => changePage(1)}>→</button>
+      <div className="toolbar" style={{display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:'10px'}}>
+        
+        {/* Navigation */}
+        <div style={{display:'flex', gap:'5px', alignItems:'center'}}>
+          <button className="btn btn-secondary" disabled={pageNumber <= 1} onClick={() => changePage(-1)}>←</button>
+          <span className="page-info" style={{margin:'0 10px'}}>Pg {pageNumber}</span>
+          <button className="btn btn-secondary" disabled={pageNumber >= numPages} onClick={() => changePage(1)}>→</button>
+        </div>
 
-        {/* --- AUDIOBOOK BUTTON (ENGLISH) --- */}
-        {viewMode === 'PDF' && (
+        {/* Action Buttons */}
+        <div style={{display:'flex', gap:'10px'}}>
+           {/* READ MODE (Auto Translate) */}
            <button 
-             onClick={handleReadEnglish} 
-             className={`btn ${isSpeaking ? 'btn-primary' : 'btn-secondary'}`}
-             style={{marginLeft: '10px'}}
+             onClick={toggleReadMode} 
+             className={`btn ${viewMode === 'TEXT' ? 'btn-primary' : 'btn-secondary'}`}
            >
-             {isSpeaking ? '⏹ Stop' : '🔊 Listen'}
+             {viewMode === 'TEXT' ? '📄 Show Original PDF' : '🇮🇳 Read in Hindi'}
            </button>
-        )}
+
+           {/* AUDIO MODE (Continuous Loop) */}
+           <button 
+             onClick={toggleAutoPlay} 
+             className={`btn ${isAutoPlay ? 'btn-danger' : 'btn-success'}`} 
+             style={{backgroundColor: isAutoPlay ? '#e74c3c' : '#27ae60', color:'white'}}
+           >
+             {isAutoPlay ? '⏹ Stop Audio' : '▶ Start Audio Book'}
+           </button>
+        </div>
       </div>
 
-      {/* --- TRANSLATION BUTTONS --- */}
-      {viewMode === 'PDF' && (
-        <div className="translate-actions" style={{justifyContent: 'center', marginBottom: '20px', gap: '10px', display: 'flex'}}>
-          <button onClick={() => handleTranslate('hi')} disabled={loading} className="lang-btn">🇮🇳 Hindi</button>
-          <button onClick={() => handleTranslate('es')} disabled={loading} className="lang-btn">🇪🇸 Spanish</button>
-          <button onClick={() => handleTranslate('fr')} disabled={loading} className="lang-btn">🇫🇷 French</button>
-        </div>
-      )}
-
-      {/* --- DOCUMENT AREA --- */}
+      {/* --- CONTENT AREA --- */}
       <div className="document-wrapper">
-        {viewMode === 'PDF' && (
+        
+        {/* VIEW 1: PDF */}
+        <div style={{ display: viewMode === 'PDF' ? 'block' : 'none' }}>
            <Document file={file} onLoadSuccess={onDocumentLoadSuccess} loading={<div>Loading novel...</div>}>
              <Page pageNumber={pageNumber} width={pdfWidth} renderTextLayer={true} className="pdf-page-shadow" />
            </Document>
-        )}
+        </div>
 
-        {/* --- TRANSLATED TEXT VIEW --- */}
-        {viewMode === 'TEXT' && (
-          <div className="text-reader fade-in">
-             <div className="text-reader-header">
-                <span>Translated Chapter</span>
-                
-                {/* --- AUDIO BUTTON (TRANSLATED) --- */}
-                <button 
-                  onClick={() => isSpeaking ? stopSpeaking() : speakText(translatedText, 'hi')} // Defaulting hint to Hindi logic, but it auto-detects largely
-                  className="btn"
-                  style={{marginRight: 'auto', marginLeft: '15px', padding: '5px 10px', fontSize: '0.9rem'}}
-                >
-                   {isSpeaking ? '⏹ Stop Audio' : '🔊 Read Aloud'}
-                </button>
+        {/* VIEW 2: TRANSLATED TEXT */}
+        <div style={{ display: viewMode === 'TEXT' ? 'block' : 'none' }} className="text-reader fade-in">
+           <div className="text-reader-header">
+              <span>📖 Hindi Translation (Page {pageNumber})</span>
+              {loading && <span style={{fontSize:'0.8em', color:'#f39c12'}}> Translating...</span>}
+           </div>
+           
+           <div className="text-content" style={{minHeight:'300px'}}>
+             {loading ? (
+               <div style={{textAlign:'center', padding:'20px'}}>
+                 <div className="spinner"></div> 
+                 <p>Translating to Hindi...</p>
+               </div>
+             ) : (
+               translatedText.split('\n').map((para, index) => <p key={index}>{para}</p>)
+             )}
+           </div>
+        </div>
 
-                <button onClick={() => { stopSpeaking(); setViewMode('PDF'); }} className="close-btn">× Close</button>
-             </div>
-             
-             <div className="text-content">
-               {translatedText.split('\n').map((para, index) => <p key={index}>{para}</p>)}
-             </div>
-          </div>
-        )}
       </div>
     </div>
   );
