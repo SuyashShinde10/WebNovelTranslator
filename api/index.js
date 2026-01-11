@@ -5,45 +5,44 @@ const axios = require('axios');
 const multer = require('multer');
 
 const app = express();
-const upload = multer({ dest: 'uploads/' });
+
+// --- CRITICAL FIX FOR VERCEL ---
+// Use memoryStorage instead of diskStorage.
+// This stores the file in RAM instead of trying to create a folder (which causes the crash).
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
 app.use(cors());
 app.use(express.json());
 
 // --- CONFIGURATION ---
 const API_KEY = process.env.GEMINI_API_KEY;
-// UPDATED: Using the specific model you requested
-const MODEL_NAME = "gemini-2.5-flash"; 
-
-// --- CHECK API KEY ---
-if (!API_KEY) {
-  console.error("❌ CRITICAL: GEMINI_API_KEY is missing in .env file.");
-} else {
-  console.log(`✅ API Key loaded. Target Model: ${MODEL_NAME}`);
-}
+const MODEL_NAME = "gemini-2.5-flash"; // Or 'gemini-1.5-flash' if 2.5 is not available
 
 // --- ROUTES ---
 
 app.get('/', (req, res) => {
-  res.send(`Backend Running. Model: ${MODEL_NAME}`);
+  res.send(`Backend Running. Mode: Serverless (Memory Storage). Model: ${MODEL_NAME}`);
 });
 
+// Upload Route (Now uses RAM, won't crash Vercel)
 app.post('/api/upload', upload.single('novelPdf'), (req, res) => {
   if (req.file) {
-    console.log(`📂 File Uploaded: ${req.file.originalname}`);
+    // In memory storage, we don't have a path, but we have the buffer.
+    // Since we just need to confirm upload for the UI:
+    console.log(`📂 File Received in Memory: ${req.file.originalname}`);
     res.json({ filename: req.file.originalname });
   } else {
     res.status(400).json({ error: "No file uploaded" });
   }
 });
 
+// Translate Route
 app.post('/api/translate', async (req, res) => {
   const { text, targetLang } = req.body;
 
   if (!API_KEY) return res.status(500).json({ error: "Server missing API Key" });
   if (!text) return res.status(400).json({ error: "No text provided" });
-
-  console.log(`🔄 Sending to ${MODEL_NAME}...`);
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
@@ -59,7 +58,6 @@ app.post('/api/translate', async (req, res) => {
     const translatedText = response.data.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (translatedText) {
-      console.log("✅ Translation Success!");
       res.json({ translatedText });
     } else {
       throw new Error("Empty response from AI");
@@ -70,16 +68,7 @@ app.post('/api/translate', async (req, res) => {
     if (error.response) {
       console.error(`Status: ${error.response.status}`);
       console.error(JSON.stringify(error.response.data, null, 2));
-      
-      // If 404, it means 'gemini-2.5-flash' might be restricted on your key
-      if (error.response.status === 404) {
-        console.error("⚠️ HINT: This account might not have access to gemini-2.5-flash yet.");
-      }
-      
-      res.status(500).json({ 
-        error: "AI Model Error", 
-        details: error.response.data 
-      });
+      res.status(500).json({ error: "AI Model Error", details: error.response.data });
     } else {
       console.error(error.message);
       res.status(500).json({ error: "Server Error", details: error.message });
@@ -87,5 +76,11 @@ app.post('/api/translate', async (req, res) => {
   }
 });
 
-const PORT = 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+// Vercel requires exporting the app, not just listening
+// If running locally, it listens. If on Vercel, it exports.
+if (require.main === module) {
+    const PORT = 5000;
+    app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
+}
+
+module.exports = app;
