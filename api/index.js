@@ -11,53 +11,36 @@ app.use(express.json());
 
 const API_KEY = process.env.GEMINI_API_KEY;
 
-// --- SMART MODEL DETECTION ---
-// We will look for these preferred models in order
-const PREFERRED_MODELS = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro', 'gemini-1.0-pro'];
-let activeModel = 'gemini-1.5-flash'; // Default fallback
+// List of models to try (in order of preference)
+// If the first one fails, the code will try the next one.
+const MODEL_CASCADE = [
+    'gemini-1.5-flash',
+    'gemini-pro',
+    'gemini-1.0-pro-latest',
+    'gemini-1.0-pro'
+];
 
-async function autoDetectModel() {
-    try {
-        console.log("🔍 Auto-detecting best AI model...");
-        // Ask Google: "What models do I have access to?"
-        const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}`;
-        const response = await axios.get(listUrl);
-        const availableModels = response.data.models || [];
-
-        // Find the first model that supports 'generateContent'
-        const bestModel = availableModels.find(m => 
-            m.supportedGenerationMethods && 
-            m.supportedGenerationMethods.includes('generateContent') &&
-            PREFERRED_MODELS.some(pref => m.name.includes(pref))
-        );
-
-        if (bestModel) {
-            // Google returns "models/gemini-1.5-flash", we want just "gemini-1.5-flash"
-            activeModel = bestModel.name.replace('models/', '');
-            console.log(`✅ Success! Switched to AI Model: ${activeModel}`);
-        } else {
-            console.log("⚠️ Could not auto-detect. Using default:", activeModel);
-            console.log("Available models were:", availableModels.map(m => m.name));
-        }
-    } catch (err) {
-        console.error("❌ Auto-detect failed. Using default.", err.message);
-    }
+// Helper function to try translation with a specific model
+async function tryTranslate(modelName, promptText) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${API_KEY}`;
+    const response = await axios.post(url, {
+        contents: [{ parts: [{ text: promptText }] }]
+    }, { headers: { 'Content-Type': 'application/json' } });
+    
+    return response.data.candidates[0].content.parts[0].text;
 }
-// Run detection when server starts
-autoDetectModel();
-
 
 // --- ROUTES ---
 
 app.get('/', (req, res) => {
-    res.send(`Backend is running! Active Model: ${activeModel}`);
+    res.send("Backend is running! (Cascade Mode)");
 });
 
 app.post('/api/translate', async (req, res) => {
     const { text, targetLang } = req.body;
     if (!text) return res.status(400).json({ error: 'No text provided' });
 
-    console.log(`AI Translating to ${targetLang} using ${activeModel}...`);
+    console.log(`AI Translating to ${targetLang}...`);
 
     let promptText = "";
     if (targetLang === 'hi') {
@@ -66,21 +49,27 @@ app.post('/api/translate', async (req, res) => {
         promptText = `Translate the following text into ${targetLang}:\n\n"${text}"`;
     }
 
-    try {
-        // Use the ACTIVE MODEL we found earlier
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:generateContent?key=${API_KEY}`;
-        
-        const response = await axios.post(url, {
-            contents: [{ parts: [{ text: promptText }] }]
-        }, { headers: { 'Content-Type': 'application/json' } });
+    // --- THE CASCADE LOOP ---
+    // Try each model one by one until success
+    for (const modelName of MODEL_CASCADE) {
+        try {
+            console.log(`👉 Trying model: ${modelName}...`);
+            const translatedText = await tryTranslate(modelName, promptText);
+            
+            console.log(`✅ Success with ${modelName}!`);
+            return res.json({ original: text, translatedText: translatedText, lang: targetLang, usedModel: modelName });
 
-        const translatedText = response.data.candidates[0].content.parts[0].text;
-        res.json({ original: text, translatedText: translatedText, lang: targetLang });
-
-    } catch (err) {
-        console.error("AI API Error:", err.response ? err.response.data : err.message);
-        res.status(500).json({ error: 'Translation failed', details: err.message });
+        } catch (err) {
+            console.error(`❌ ${modelName} Failed:`, err.response ? err.response.data.error.message : err.message);
+            // Loop continues to the next model...
+        }
     }
+
+    // If we get here, ALL models failed
+    res.status(500).json({ 
+        error: 'All AI models failed', 
+        details: 'Check Vercel logs. Your API Key might be invalid or has no access to any Gemini models.' 
+    });
 });
 
 // VERCEL EXPORT
