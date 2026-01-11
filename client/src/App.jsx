@@ -1,37 +1,35 @@
 import React, { useState } from 'react';
 import FileUpload from './components/FileUpload';
 import PdfReader from './components/PdfReader';
+import './App.css';
 
 function App() {
-  const [currentFile, setCurrentFile] = useState(null);
+  const [currentFile, setCurrentFile] = useState(null); // Now stores the FILE OBJECT, not just a name
 
   return (
-    <div style={{ fontFamily: 'Arial, sans-serif', padding: '20px', backgroundColor: '#f4f1ea', minHeight: '100vh' }}>
-      <header style={{ textAlign: 'center', marginBottom: '30px' }}>
-        <h1 style={{ color: '#2c3e50' }}>Web Novel Translator</h1>
+    <div className="app-container">
+      <header style={{ marginBottom: '30px', textAlign: 'center' }}>
+        <h1 style={{ color: '#2c3e50', margin: 0 }}>Web Novel Translator</h1>
+        <p style={{ color: '#7f8c8d', marginTop: '5px' }}>AI-Powered English to Hindi Reader</p>
       </header>
       
       {!currentFile ? (
-        <FileUpload onUploadSuccess={(filename) => setCurrentFile(filename)} />
+        // Pass the function to save the whole file
+        <FileUpload onFileSelect={(file) => setCurrentFile(file)} />
       ) : (
-        <div>
+        <div className="fade-in">
            <div style={{ maxWidth: '800px', margin: '0 auto 10px auto' }}>
              <button 
                onClick={() => setCurrentFile(null)} 
-               style={{ 
-                 background: 'transparent', 
-                 border: '1px solid #666', 
-                 padding: '5px 10px', 
-                 cursor: 'pointer',
-                 borderRadius: '4px'
-               }}
+               className="btn btn-secondary"
+               style={{ padding: '5px 10px', fontSize: '0.9rem' }}
              >
                ← Upload New Novel
              </button>
            </div>
            
-           {/* Render the Reader */}
-           <PdfReader filename={currentFile} />
+           {/* Pass the File object directly to the reader */}
+           <PdfReader file={currentFile} />
         </div>
       )}
     </div>
