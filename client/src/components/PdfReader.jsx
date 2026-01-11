@@ -18,9 +18,12 @@ const PdfReader = ({ file }) => {
   const [loading, setLoading] = useState(false);
   const [pdfWidth, setPdfWidth] = useState(null);
   
+  // --- NEW: SEARCH PAGE STATE ---
+  const [inputPage, setInputPage] = useState('');
+
   // --- AUTOMATION STATES ---
-  const [isAutoPlay, setIsAutoPlay] = useState(false); // Controls the continuous loop
-  const isAutoPlayRef = useRef(false); // Ref to access state inside event listeners
+  const [isAutoPlay, setIsAutoPlay] = useState(false); 
+  const isAutoPlayRef = useRef(false); 
 
   // Mobile Responsive Width
   useEffect(() => {
@@ -33,17 +36,15 @@ const PdfReader = ({ file }) => {
     return () => window.removeEventListener('resize', updateWidth);
   }, []);
 
-  // Sync Ref with State (for use inside audio callbacks)
+  // Sync Ref with State
   useEffect(() => {
     isAutoPlayRef.current = isAutoPlay;
-    // If user stops auto-play manually, cancel speech
     if (!isAutoPlay) {
       window.speechSynthesis.cancel();
     }
   }, [isAutoPlay]);
 
   // --- AUTOMATION ENGINE ---
-  // Triggers whenever pageNumber changes IF AutoPlay is active
   useEffect(() => {
     if (isAutoPlay && pdfObject) {
       runAutoSequence();
@@ -64,12 +65,9 @@ const PdfReader = ({ file }) => {
   }
 
   // --- CORE FUNCTIONS ---
-
-  // 1. Translation Logic
   const fetchTranslation = async (text) => {
     try {
       setLoading(true);
-      // Use relative path '/api/translate' for Vercel support
       const res = await axios.post('/api/translate', {
         text: text,
         targetLang: 'hi' // FORCE HINDI
@@ -83,19 +81,16 @@ const PdfReader = ({ file }) => {
     }
   };
 
-  // 2. Speech Logic
   const speakText = (text, onComplete) => {
-    window.speechSynthesis.cancel(); // Stop previous
+    window.speechSynthesis.cancel(); 
     const utterance = new SpeechSynthesisUtterance(text);
     
-    // Find Hindi Voice
     const voices = window.speechSynthesis.getVoices();
     const hindiVoice = voices.find(v => v.lang.includes('hi'));
     if (hindiVoice) utterance.voice = hindiVoice;
 
     utterance.rate = 1.0;
 
-    // EVENT: When audio finishes
     utterance.onend = () => {
       if (onComplete && isAutoPlayRef.current) {
         onComplete();
@@ -105,36 +100,53 @@ const PdfReader = ({ file }) => {
     window.speechSynthesis.speak(utterance);
   };
 
-  // 3. The "Auto Loop" Logic
   const runAutoSequence = async () => {
-    // Step A: Extract Text
     const rawText = await extractTextFromPage(pageNumber);
     if (!rawText.trim()) {
-       // If empty page, skip to next
        if (pageNumber < numPages) setPageNumber(p => p + 1);
        return;
     }
 
-    // Step B: Translate to Hindi (Auto)
     const hindiText = await fetchTranslation(rawText);
     setTranslatedText(hindiText);
-    setViewMode('TEXT'); // Force Text Mode to show what's being read
+    setViewMode('TEXT'); 
 
-    // Step C: Speak & Wait for Finish
     speakText(hindiText, () => {
-      // Step D: On Finish, Go Next
       if (pageNumber < numPages) {
         setPageNumber(prev => prev + 1);
       } else {
-        setIsAutoPlay(false); // Stop at end of book
+        setIsAutoPlay(false); 
         alert("Book Completed!");
       }
     });
   };
 
-  // --- USER BUTTON HANDLERS ---
+  // --- NAVIGATION HANDLERS ---
 
-  // User clicks "Read Mode" -> Auto Translate current page
+  const changePage = (offset) => {
+    setIsAutoPlay(false); 
+    setPageNumber(prev => prev + offset);
+    setTranslatedText(''); 
+    setViewMode('PDF'); 
+  };
+
+  // --- NEW: SEARCH / JUMP TO PAGE FUNCTION ---
+  const handleJumpToPage = (e) => {
+    e.preventDefault();
+    const target = parseInt(inputPage);
+    if (target >= 1 && target <= numPages) {
+      setIsAutoPlay(false); // Stop audio if jumping
+      setPageNumber(target);
+      setTranslatedText(''); // Clear translation
+      setViewMode('PDF'); // Reset to PDF view
+      setInputPage(''); // Clear input
+    } else {
+      alert(`Please enter a page between 1 and ${numPages}`);
+    }
+  };
+
+  // --- FEATURE HANDLERS ---
+
   const toggleReadMode = async () => {
     if (viewMode === 'PDF') {
       setViewMode('TEXT');
@@ -147,20 +159,12 @@ const PdfReader = ({ file }) => {
     }
   };
 
-  // User clicks "Audio Book" -> Starts the Loop
   const toggleAutoPlay = () => {
     if (isAutoPlay) {
-      setIsAutoPlay(false); // Stop
+      setIsAutoPlay(false); 
     } else {
-      setIsAutoPlay(true); // Start Loop (triggers useEffect)
+      setIsAutoPlay(true); 
     }
-  };
-
-  const changePage = (offset) => {
-    setIsAutoPlay(false); // Manual navigation stops auto-play
-    setPageNumber(prev => prev + offset);
-    setTranslatedText(''); // Clear old text
-    setViewMode('PDF'); // Revert to PDF view on manual change
   };
 
   return (
@@ -169,30 +173,47 @@ const PdfReader = ({ file }) => {
       {/* --- TOOLBAR --- */}
       <div className="toolbar" style={{display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:'10px'}}>
         
-        {/* Navigation */}
+        {/* 1. Prev/Next Buttons */}
         <div style={{display:'flex', gap:'5px', alignItems:'center'}}>
           <button className="btn btn-secondary" disabled={pageNumber <= 1} onClick={() => changePage(-1)}>←</button>
-          <span className="page-info" style={{margin:'0 10px'}}>Pg {pageNumber}</span>
+          <span className="page-info" style={{margin:'0 10px', minWidth: '80px', textAlign: 'center'}}>
+             Pg {pageNumber} / {numPages || '--'}
+          </span>
           <button className="btn btn-secondary" disabled={pageNumber >= numPages} onClick={() => changePage(1)}>→</button>
         </div>
 
-        {/* Action Buttons */}
+        {/* 2. NEW: SEARCH PAGE INPUT */}
+        <form onSubmit={handleJumpToPage} style={{display:'flex', gap:'5px'}}>
+          <input 
+            type="number" 
+            value={inputPage}
+            onChange={(e) => setInputPage(e.target.value)}
+            placeholder="Go to..."
+            style={{
+              width: '70px', 
+              padding: '6px', 
+              borderRadius: '4px', 
+              border: '1px solid #ccc'
+            }}
+          />
+          <button type="submit" className="btn btn-secondary" style={{padding: '6px 12px'}}>Go</button>
+        </form>
+
+        {/* 3. Smart Actions (Read & Audio) */}
         <div style={{display:'flex', gap:'10px'}}>
-           {/* READ MODE (Auto Translate) */}
            <button 
              onClick={toggleReadMode} 
              className={`btn ${viewMode === 'TEXT' ? 'btn-primary' : 'btn-secondary'}`}
            >
-             {viewMode === 'TEXT' ? '📄 Show Original PDF' : '🇮🇳 Read in Hindi'}
+             {viewMode === 'TEXT' ? '📄 PDF View' : '🇮🇳 Hindi View'}
            </button>
 
-           {/* AUDIO MODE (Continuous Loop) */}
            <button 
              onClick={toggleAutoPlay} 
              className={`btn ${isAutoPlay ? 'btn-danger' : 'btn-success'}`} 
              style={{backgroundColor: isAutoPlay ? '#e74c3c' : '#27ae60', color:'white'}}
            >
-             {isAutoPlay ? '⏹ Stop Audio' : '▶ Start Audio Book'}
+             {isAutoPlay ? '⏹ Stop Audio' : '▶ Auto Play'}
            </button>
         </div>
       </div>
@@ -200,14 +221,14 @@ const PdfReader = ({ file }) => {
       {/* --- CONTENT AREA --- */}
       <div className="document-wrapper">
         
-        {/* VIEW 1: PDF */}
+        {/* PDF VIEW */}
         <div style={{ display: viewMode === 'PDF' ? 'block' : 'none' }}>
            <Document file={file} onLoadSuccess={onDocumentLoadSuccess} loading={<div>Loading novel...</div>}>
              <Page pageNumber={pageNumber} width={pdfWidth} renderTextLayer={true} className="pdf-page-shadow" />
            </Document>
         </div>
 
-        {/* VIEW 2: TRANSLATED TEXT */}
+        {/* TRANSLATED TEXT VIEW */}
         <div style={{ display: viewMode === 'TEXT' ? 'block' : 'none' }} className="text-reader fade-in">
            <div className="text-reader-header">
               <span>📖 Hindi Translation (Page {pageNumber})</span>
